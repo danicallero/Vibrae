@@ -1,0 +1,40 @@
+data/
+music/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+env/
+venv/
+.env
+*.env
+*.log
+
+# Node / frontend ignores
+node_modules/
+dist/
+.expo/
+*.expo
+*.expo-shared/
+front/dist/
+front/ios/
+front/node_modules/
+front/android/
+
+# OS files (macOS)
+.DS_Store
+
+# IDE / Editor files (adjust if you use something else)
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+
+# Build outputs or caches
+build/
+.cache/
+
+# Environment files
+*.env

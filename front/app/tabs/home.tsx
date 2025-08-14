@@ -331,7 +331,7 @@ export default function HomePage() {
               <Text style={[styles.addButtonText, { fontSize: 16 }]}>Escenas</Text>
             </TouchableOpacity>
           </View>
-          
+
         </ScrollView>
 
         <TouchableOpacity
@@ -362,7 +362,7 @@ export default function HomePage() {
         backgroundColor: COLORS.background,
       }}>
         <Text style={{ color: COLORS.textLight, fontSize: 12 }}>
-          made with ❤️ by Dani Callero
+          Made with ❤️ by Dani Callero
         </Text>
       </View>
     </SafeAreaView>

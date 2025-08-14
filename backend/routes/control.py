@@ -32,8 +32,9 @@ def notify_ws_clients_threadsafe(data):
     asyncio.run_coroutine_threadsafe(notify_ws_clients(data), main_loop)
 
 
-def notify_from_player(data):
+def notify_from_player(data, volume):
     notify_ws_clients_threadsafe({"type": "now_playing", "now_playing": data})
+    notify_ws_clients_threadsafe({"type": "volume", "volume": volume})
 
 
 class BaseTokenRequest(BaseModel):

@@ -35,6 +35,7 @@ class Player:
         self._pending_stop = False
         self._pending_stop_deadline = None
         self._stopping = False
+        self._scene_switched = False
 
     # Utility
     def _detect_player(self) -> str:
@@ -91,7 +92,6 @@ class Player:
         with self._lock:
             logger.info(f"play_scene called: folder={folder}, volume={volume}")
 
-            # Ensure no old playback thread exists
             if self._thread and self._thread.is_alive():
                 logger.info("[Player] Stopping old thread before starting new scene.")
                 self.stop(force=True)
@@ -100,9 +100,11 @@ class Player:
             if volume is not None:
                 self.set_volume(volume)
             self._load_and_shuffle(folder)
+
             self._stop_event.clear()
             self._pending_stop = False
             self._pending_stop_deadline = None
+            self._scene_switched = False
 
             notify_from_player(self.queue[0] if self.queue else None, self.current_volume)
 
@@ -151,6 +153,9 @@ class Player:
 
     def get_now_playing(self) -> Optional[str]:
         return self.now_playing
+    
+    def is_playing(self) -> bool:
+        return bool(self._thread and self._thread.is_alive() and self.now_playing)
 
     # Internal helpers
     def _terminate_proc(self, proc: subprocess.Popen):
@@ -168,6 +173,9 @@ class Player:
 
     # Playback loop
     def _play_loop(self):
+        next_song_proc = None
+        next_song_path = None
+
         while not self._stop_event.is_set():
             with self._lock:
                 if self._switch_scene_request:
@@ -179,34 +187,43 @@ class Player:
                         self.set_volume(volume)
                     self._load_and_shuffle(folder)
                     self.queue_pos = 0
+                    next_song_proc = None
+                    next_song_path = None
 
             if not self.queue:
                 logger.info(f"[Player] No playable files in '{self.current_folder}'. Waiting...")
-                time.sleep(5)
+                time.sleep(2)
                 continue
 
-            try:
-                song = self.queue[self.queue_pos]
-            except IndexError:
-                logger.error("[Player] Queue index out of range. Resetting queue.")
-                self.queue_pos = 0
+            # Continue playing if we already started a song via crossfade
+            if next_song_proc:
+                logger.info(f"[Player] Continuing already started song: {next_song_path}")
+                self._current_proc = next_song_proc
+                self.now_playing = next_song_path
+                notify_from_player(next_song_path, self.current_volume)
+
+                try:
+                    next_song_proc.wait()
+                except Exception:
+                    pass
+                next_song_proc = None
+                next_song_path = None
                 continue
 
+            # Start playback of the current queue song
+            song = self.queue[self.queue_pos]
             next_pos = (self.queue_pos + 1) % len(self.queue)
             next_song = self.queue[next_pos] if next_pos != self.queue_pos else None
 
             self.now_playing = song
             notify_from_player(song, self.current_volume)
-            self._play_song_with_crossfade(song, next_song)
 
+            next_song_proc, next_song_path = self._play_song_with_crossfade(song, next_song)
+
+            # Stop early if requested
             if self._stop_event.is_set() and not self._pending_stop:
                 logger.info("[Player] Stop event detected. Exiting play loop.")
                 break
-
-            self.queue_pos = next_pos
-            if self.queue_pos == 0:
-                logger.info("[Player] Queue finished, reshuffling.")
-                random.shuffle(self.queue)
 
     def _play_song_with_crossfade(self, song: str, next_song: Optional[str]):
         logger.info(f"[Player] _play_song_with_crossfade: song={song}, next_song={next_song}")
@@ -220,42 +237,63 @@ class Player:
             self._current_proc = proc
             start = time.time()
 
+            # Play until fade point
             while time.time() - start < play_time:
-                if self._stop_event.is_set():  # Immediate break on force stop
-                    proc.terminate()
-                    return
+                if self._stop_event.is_set():
+                    self._terminate_proc(proc)
+                    return None, None
 
                 if self._pending_stop and self._pending_stop_deadline and time.time() >= self._pending_stop_deadline:
                     logger.info("[Player] Timeout reached, stopping song.")
-                    proc.terminate()
+                    self._terminate_proc(proc)
                     self._stop_event.set()
-                    return
+                    return None, None
 
-                time.sleep(0.2)
+                time.sleep(0.1)
 
+            # If we are stopping after current, end cleanly here
             if self._pending_stop:
                 logger.info("[Player] Current song finished, pending stop active. Not starting next song.")
                 proc.wait()
                 notify_from_player(None, self.current_volume)
                 self._stop_event.set()
-                return
+                return None, None
 
-            if next_song:
+            # Crossfade start
+            if next_song and not self._switch_scene_request:
                 next_proc = subprocess.Popen(
                     ["afplay", next_song] if self._player_cmd == "afplay" else ["mpg123", "-q", next_song]
                 )
-                time.sleep(self.crossfade_sec)
-                proc.terminate()
-                next_proc.wait()
+
+                fade_start = time.time()
+                while time.time() - fade_start < self.crossfade_sec:
+                    if self._stop_event.is_set():
+                        self._terminate_proc(proc)
+                        self._terminate_proc(next_proc)
+                        return None, None
+                    time.sleep(0.05)
+
+                # Ensure old song is fully stopped
+                self._terminate_proc(proc)
+
+                # Advance queue index now (avoid replaying)
+                self.queue_pos = (self.queue_pos + 1) % len(self.queue)
+                if self.queue_pos == 0:
+                    random.shuffle(self.queue)
+
+                # Hand off next song to play_loop for continuation
+                return next_proc, next_song
             else:
-                proc.wait()
+                # No next song — finish normally
+                self._terminate_proc(proc)
+
+                # Advance queue after fully finishing
+                self.queue_pos = (self.queue_pos + 1) % len(self.queue)
+                if self.queue_pos == 0:
+                    random.shuffle(self.queue)
+
+                return None, None
 
         except Exception as e:
             logger.error(f"[Player] Error during playback: {e}")
-
-        finally:
-            self._current_proc = None
-            if self._pending_stop:
-                logger.info("[Player] Song finished, pending stop active. Signaling stop now.")
-                notify_from_player(None, self.current_volume)
-                self._stop_event.set()
+            return None, None

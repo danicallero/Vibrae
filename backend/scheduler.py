@@ -47,12 +47,6 @@ class Scheduler:
             self._last_routine_id = routine.id
             self._last_scene = scene
             self._last_routine = routine
-            # Notify WebSocket clients
-            try:
-                from backend.routes.control import notify_ws_clients
-                notify_ws_clients({"type": "now_playing", "now_playing": scene.path})
-            except Exception:
-                pass
 
     def stop(self):
         """Stop the scheduler thread."""

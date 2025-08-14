@@ -6,6 +6,7 @@ import {
   Alert,
   ActivityIndicator,
   SafeAreaView,
+  ScrollView,
 } from "react-native";
 import { Slider } from "react-native-awesome-slider";
 import { useSharedValue } from "react-native-reanimated";
@@ -207,125 +208,131 @@ export default function HomePage() {
         <Text style={{ color: COLORS.textLight, fontSize: 14, marginBottom: 24 }}>
           Gestiona la música y el ambiente del jardín
         </Text>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingBottom: 64 }}
+          showsVerticalScrollIndicator={false}
+        >
+          {loading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={COLORS.primary} />
+            </View>
+          ) : nowPlaying ? (
+            <View style={[styles.balanceCard, { marginBottom: 24 }]}>
+              <Text style={styles.balanceTitle}>Reproduciendo</Text>
+              <Text style={styles.balanceAmount}>{nowPlaying}</Text>
 
-        {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={COLORS.primary} />
+              <TouchableOpacity
+                style={[styles.addButton, { backgroundColor: COLORS.expense, marginTop: 10 }]}
+                onPress={handleStop}
+              >
+                <Ionicons name="stop-circle" size={18} color={COLORS.white} />
+                <Text style={styles.addButtonText}>Detener música</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={[styles.emptyState, { marginBottom: 24 }]}>
+              <Ionicons name="musical-notes-outline" size={32} color={COLORS.textLight} />
+              <Text style={styles.emptyStateTitle}>Sin música</Text>
+              <Text style={styles.emptyStateText}>
+                Actualmente no hay ninguna canción en reproducción.
+              </Text>
+              {shouldBePlaying && (
+                <TouchableOpacity
+                  style={[styles.addButton, { backgroundColor: COLORS.primary, marginTop: 16 }]}
+                  onPress={async () => {
+                    // Resume schedule
+                    try {
+                      const token = await getToken();
+                      await fetch(`${API_URL}/control/resume`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ token }),
+                      });
+                      setLoading(true); // Wait for WebSocket update
+                      firstWsMsg.current = false;
+                      setTimeout(async () => {
+                        checkShouldBePlaying();
+                        // Fallback: poll now_playing if WebSocket hasn't updated
+                        try {
+                          const res = await fetch(`${API_URL}/control/now_playing`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ token }),
+                          });
+                          const data = await res.json();
+                          if (data.now_playing) {
+                            const filename = data.now_playing.split("/").pop();
+                            setNowPlaying(filename || null);
+                            setLoading(false);
+                          }
+                        } catch { }
+                      }, 1200);
+                    } catch (err) {
+                      Alert.alert("Error", "No se pudo reanudar la rutina.");
+                    }
+                  }}
+                >
+                  <Ionicons name="play-circle" size={18} color={COLORS.white} />
+                  <Text style={styles.addButtonText}>
+                    Reanudar {scheduleName ? `“${scheduleName}”` : "rutina"}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          <View style={[styles.balanceCard, { marginBottom: 32, padding: 16 }]}>
+            <Text style={{ fontSize: 16, fontWeight: "500", color: COLORS.text, marginBottom: 12 }}>
+              Volumen: {Math.round(volume)}%
+            </Text>
+
+            <Slider
+              progress={volumeShared}
+              minimumValue={min}
+              maximumValue={max}
+              containerStyle={{ height: 4, justifyContent: "center" }}
+              theme={{
+                maximumTrackTintColor: COLORS.border,
+                minimumTrackTintColor: COLORS.primary,
+              }}
+              renderThumb={() => (
+                <View
+                  style={{
+                    backgroundColor: COLORS.primary,
+                    borderColor: COLORS.primary,
+                    borderWidth: 2,
+                    width: 20,
+                    height: 20,
+                    borderRadius: 10,
+                  }}
+                />
+              )}
+              renderBubble={() => null}
+              onSlidingComplete={(val) => handleVolumeChange(val)}
+            />
+
           </View>
-        ) : nowPlaying ? (
-          <View style={[styles.balanceCard, { marginBottom: 24 }]}>
-            <Text style={styles.balanceTitle}>Reproduciendo</Text>
-            <Text style={styles.balanceAmount}>{nowPlaying}</Text>
+
+          <View style={{ gap: 16 }}>
+            <TouchableOpacity
+              style={[styles.addButton, { paddingVertical: 14, borderRadius: 28 }]}
+              onPress={() => router.push("/tabs/routines")}
+            >
+              <Ionicons name="calendar-outline" size={20} color="#fff" />
+              <Text style={[styles.addButtonText, { fontSize: 16 }]}>Rutinas</Text>
+            </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.addButton, { backgroundColor: COLORS.expense, marginTop: 10 }]}
-              onPress={handleStop}
+              style={[styles.addButton, { paddingVertical: 14, borderRadius: 28 }]}
+              onPress={() => router.push("/tabs/scenes")}
             >
-              <Ionicons name="stop-circle" size={18} color={COLORS.white} />
-              <Text style={styles.addButtonText}>Detener música</Text>
+              <Ionicons name="color-palette-outline" size={20} color="#fff" />
+              <Text style={[styles.addButtonText, { fontSize: 16 }]}>Escenas</Text>
             </TouchableOpacity>
           </View>
-        ) : (
-          <View style={[styles.emptyState, { marginBottom: 24 }]}>
-            <Ionicons name="musical-notes-outline" size={32} color={COLORS.textLight} />
-            <Text style={styles.emptyStateTitle}>Sin música</Text>
-            <Text style={styles.emptyStateText}>
-              Actualmente no hay ninguna canción en reproducción.
-            </Text>
-            {shouldBePlaying && (
-              <TouchableOpacity
-                style={[styles.addButton, { backgroundColor: COLORS.primary, marginTop: 16 }]}
-                onPress={async () => {
-                  // Resume schedule
-                  try {
-                    const token = await getToken();
-                    await fetch(`${API_URL}/control/resume`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ token }),
-                    });
-                    setLoading(true); // Wait for WebSocket update
-                    firstWsMsg.current = false;
-                    setTimeout(async () => {
-                      checkShouldBePlaying();
-                      // Fallback: poll now_playing if WebSocket hasn't updated
-                      try {
-                        const res = await fetch(`${API_URL}/control/now_playing`, {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ token }),
-                        });
-                        const data = await res.json();
-                        if (data.now_playing) {
-                          const filename = data.now_playing.split("/").pop();
-                          setNowPlaying(filename || null);
-                          setLoading(false);
-                        }
-                      } catch { }
-                    }, 1200);
-                  } catch (err) {
-                    Alert.alert("Error", "No se pudo reanudar la rutina.");
-                  }
-                }}
-              >
-                <Ionicons name="play-circle" size={18} color={COLORS.white} />
-                <Text style={styles.addButtonText}>
-                  Reanudar {scheduleName ? `“${scheduleName}”` : "rutina"}
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-
-        <View style={[styles.balanceCard, { marginBottom: 32, padding: 16 }]}>
-          <Text style={{ fontSize: 16, fontWeight: "500", color: COLORS.text, marginBottom: 12 }}>
-            Volumen: {Math.round(volume)}%
-          </Text>
-
-          <Slider
-            progress={volumeShared}
-            minimumValue={min}
-            maximumValue={max}
-            containerStyle={{ height: 4, justifyContent: "center" }}
-            theme={{
-              maximumTrackTintColor: COLORS.border,
-              minimumTrackTintColor: COLORS.primary,
-            }}
-            renderThumb={() => (
-              <View
-                style={{
-                  backgroundColor: COLORS.primary,
-                  borderColor: COLORS.primary,
-                  borderWidth: 2,
-                  width: 20,
-                  height: 20,
-                  borderRadius: 10,
-                }}
-              />
-            )}
-            renderBubble={() => null}
-            onSlidingComplete={(val) => handleVolumeChange(val)}
-          />
-
-        </View>
-
-        <View style={{ gap: 16 }}>
-          <TouchableOpacity
-            style={[styles.addButton, { paddingVertical: 14, borderRadius: 28 }]}
-            onPress={() => router.push("/tabs/routines")}
-          >
-            <Ionicons name="calendar-outline" size={20} color="#fff" />
-            <Text style={[styles.addButtonText, { fontSize: 16 }]}>Rutinas</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.addButton, { paddingVertical: 14, borderRadius: 28 }]}
-            onPress={() => router.push("/tabs/scenes")}
-          >
-            <Ionicons name="color-palette-outline" size={20} color="#fff" />
-            <Text style={[styles.addButtonText, { fontSize: 16 }]}>Escenas</Text>
-          </TouchableOpacity>
-        </View>
+          
+        </ScrollView>
 
         <TouchableOpacity
           onPress={handleLogout}

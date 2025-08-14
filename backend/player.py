@@ -34,6 +34,7 @@ class Player:
         self._current_proc: Optional[subprocess.Popen] = None
         self._pending_stop = False
         self._pending_stop_deadline = None
+        self._stopping = False
 
     # Utility
     def _detect_player(self) -> str:
@@ -100,8 +101,10 @@ class Player:
                 self.set_volume(volume)
             self._load_and_shuffle(folder)
             self._stop_event.clear()
+            self._pending_stop = False
+            self._pending_stop_deadline = None
 
-            notify_from_player(self.queue[0] if self.queue else None)
+            notify_from_player(self.queue[0] if self.queue else None, self.current_volume)
 
             logger.info("[Player] Starting playback thread.")
             self._thread = threading.Thread(target=self._play_loop, daemon=True)
@@ -113,28 +116,33 @@ class Player:
             self._switch_scene_request = (folder, volume)
 
     def stop(self, force: bool = True):
-        logger.info(f"Stopping playback{' (force)' if force else ''}.")
-        self._stop_event.set()
+        if self._stopping:
+            logger.warning("[Player] Stop already in progress.")
+            if force and self._current_proc:
+                self._terminate_proc(self._current_proc)
+            return
 
-        if force and self._current_proc:
-            try:
-                self._current_proc.terminate()
-                self._current_proc.wait(timeout=5)
-                logger.info("[Player] Subprocess force-terminated.")
-            except Exception as e:
-                logger.warning(f"[Player] Failed to force terminate subprocess: {e}")
+        self._stopping = True
+        try:
+            logger.info(f"Stopping playback{' (force)' if force else ''}.")
+            self._stop_event.set()
 
-        if self._thread:
-            self._thread.join(timeout=5 if force else 310)
-            while self._thread and self._thread.is_alive():
-                logger.warning("[Player] Waiting for old playback thread to exit...")
-                time.sleep(0.1)
+            if force and self._current_proc:
+                self._terminate_proc(self._current_proc)
+
+            if self._thread and self._thread.is_alive():
+                self._thread.join(timeout=5 if force else 310)
+
+                if self._thread.is_alive() and force:
+                    logger.error("[Player] Playback thread did not exit in time. Resetting state.")
+
             self._thread = None
-
-        self._current_proc = None
-        self.now_playing = None
-        self._pending_stop = False
-        self._pending_stop_deadline = None
+            self._current_proc = None
+            self.now_playing = None
+            self._pending_stop = False
+            self._pending_stop_deadline = None
+        finally:
+            self._stopping = False
 
     def stop_after_current_or_timeout(self, timeout_sec=300):
         logger.info(f"[Player] Will stop after current song or {timeout_sec} seconds.")
@@ -144,13 +152,23 @@ class Player:
     def get_now_playing(self) -> Optional[str]:
         return self.now_playing
 
+    # Internal helpers
+    def _terminate_proc(self, proc: subprocess.Popen):
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                logger.warning("[Player] Subprocess did not terminate, force-killing.")
+                proc.kill()
+                proc.wait(timeout=2)
+            logger.info("[Player] Subprocess terminated.")
+        except Exception as e:
+            logger.warning(f"[Player] Failed to terminate subprocess: {e}")
+
     # Playback loop
     def _play_loop(self):
-        from backend.db import SessionLocal
-        from backend.models import Scene
-
         while not self._stop_event.is_set():
-            # Handle immediate scene switch
             with self._lock:
                 if self._switch_scene_request:
                     folder, volume = self._switch_scene_request
@@ -178,7 +196,7 @@ class Player:
             next_song = self.queue[next_pos] if next_pos != self.queue_pos else None
 
             self.now_playing = song
-            notify_from_player(song)
+            notify_from_player(song, self.current_volume)
             self._play_song_with_crossfade(song, next_song)
 
             if self._stop_event.is_set() and not self._pending_stop:
@@ -196,22 +214,36 @@ class Player:
         play_time = max(0, song_length - self.crossfade_sec) if next_song else song_length
 
         try:
-            proc = subprocess.Popen(["afplay", song] if self._player_cmd == "afplay" else ["mpg123", "-q", song])
+            proc = subprocess.Popen(
+                ["afplay", song] if self._player_cmd == "afplay" else ["mpg123", "-q", song]
+            )
             self._current_proc = proc
             start = time.time()
 
             while time.time() - start < play_time:
+                if self._stop_event.is_set():  # Immediate break on force stop
+                    proc.terminate()
+                    return
+
                 if self._pending_stop and self._pending_stop_deadline and time.time() >= self._pending_stop_deadline:
                     logger.info("[Player] Timeout reached, stopping song.")
                     proc.terminate()
+                    self._stop_event.set()
                     return
-                if self._stop_event.is_set() and not self._pending_stop:
-                    proc.terminate()
-                    return
+
                 time.sleep(0.2)
 
+            if self._pending_stop:
+                logger.info("[Player] Current song finished, pending stop active. Not starting next song.")
+                proc.wait()
+                notify_from_player(None, self.current_volume)
+                self._stop_event.set()
+                return
+
             if next_song:
-                next_proc = subprocess.Popen(["afplay", next_song] if self._player_cmd == "afplay" else ["mpg123", "-q", next_song])
+                next_proc = subprocess.Popen(
+                    ["afplay", next_song] if self._player_cmd == "afplay" else ["mpg123", "-q", next_song]
+                )
                 time.sleep(self.crossfade_sec)
                 proc.terminate()
                 next_proc.wait()
@@ -220,9 +252,10 @@ class Player:
 
         except Exception as e:
             logger.error(f"[Player] Error during playback: {e}")
+
         finally:
             self._current_proc = None
             if self._pending_stop:
-                logger.info("[Player] Song finished, pending stop active. Stopping now.")
-                notify_from_player(None)
-                self.stop(force=True)
+                logger.info("[Player] Song finished, pending stop active. Signaling stop now.")
+                notify_from_player(None, self.current_volume)
+                self._stop_event.set()

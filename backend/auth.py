@@ -25,7 +25,6 @@ def hash_password(password: str) -> str:
 
 # Crear token con caducidad
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    print(f"key: {SECRET_KEY}")
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS))
     to_encode.update({"exp": expire})

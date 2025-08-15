@@ -296,7 +296,11 @@ export default function HomePage() {
                 maximumTrackTintColor: COLORS.border,
                 minimumTrackTintColor: COLORS.primary,
               }}
-              renderThumb={() => (
+              renderThumb={
+                (thumbWidth = 50,
+                  thumbTouchSize = 60,
+                  disableTrackPress = true
+                ) => (
                 <View
                   style={{
                     backgroundColor: COLORS.primary,
@@ -310,8 +314,11 @@ export default function HomePage() {
               )}
               renderBubble={() => null}
               onSlidingComplete={(val) => handleVolumeChange(val)}
+              onValueChange={(val) => {
+                setVolume(val);
+                volumeShared.value = val
+              }}
             />
-
           </View>
 
           <View style={{ gap: 16 }}>

@@ -356,16 +356,32 @@ const RoutinesScreen = () => {
                                     volumeShared.value = val;
                                 }}
                                 containerStyle={{
-                                    height: 4,
+                                    height: 7,
                                     justifyContent: 'center',
+                                    borderRadius: 100
                                 }}
                                 theme={{
-                                    maximumTrackTintColor: COLORS.border || '#E8D7BA',
-                                    minimumTrackTintColor: COLORS.primary || '#8B5C3E',
+                                    maximumTrackTintColor: COLORS.border,
+                                    minimumTrackTintColor: COLORS.primary,
 
                                 }}
                                 renderBubble={() => null}
 
+                                renderThumb={(
+                                    thumbWidth = 50,
+                                    thumbTouchSize = 100,
+                                    disableTrackPress = true
+                                ) => <View
+                                        style={{
+                                            backgroundColor: COLORS.primary,
+                                            borderColor: COLORS.primary,
+                                            borderWidth: 2,
+                                            width: 16,
+                                            height: 16,
+                                            borderRadius: 10,
+                                        }}
+                                    />
+                                }
                             />
 
 

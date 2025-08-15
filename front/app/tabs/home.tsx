@@ -214,7 +214,7 @@ export default function HomePage() {
           showsVerticalScrollIndicator={false}
         >
           {loading ? (
-            <View style={styles.loadingContainer}>
+            <View style={styles.balanceCard}>
               <ActivityIndicator size="large" color={COLORS.primary} />
             </View>
           ) : nowPlaying ? (
@@ -282,7 +282,7 @@ export default function HomePage() {
             </View>
           )}
 
-          <View style={[styles.balanceCard, { marginBottom: 32, padding: 16 }]}>
+          <View style={[styles.balanceCard, { marginBottom: 32, padding: 17 }]}>
             <Text style={{ fontSize: 16, fontWeight: "500", color: COLORS.text, marginBottom: 12 }}>
               Volumen: {Math.round(volume)}%
             </Text>
@@ -291,23 +291,23 @@ export default function HomePage() {
               progress={volumeShared}
               minimumValue={min}
               maximumValue={max}
-              containerStyle={{ height: 4, justifyContent: "center" }}
+              containerStyle={{ height: 7, justifyContent: "center", borderRadius: 100 }}
               theme={{
                 maximumTrackTintColor: COLORS.border,
                 minimumTrackTintColor: COLORS.primary,
               }}
-              renderThumb={
-                (thumbWidth = 50,
-                  thumbTouchSize = 60,
-                  disableTrackPress = true
-                ) => (
+              renderThumb={(
+                thumbWidth = 50,
+                thumbTouchSize = 60,
+                disableTrackPress = true
+              ) => (
                 <View
                   style={{
                     backgroundColor: COLORS.primary,
                     borderColor: COLORS.primary,
                     borderWidth: 2,
-                    width: 20,
-                    height: 20,
+                    width: 16,
+                    height: 16,
                     borderRadius: 10,
                   }}
                 />

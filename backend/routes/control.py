@@ -32,9 +32,8 @@ def notify_ws_clients_threadsafe(data):
     asyncio.run_coroutine_threadsafe(notify_ws_clients(data), main_loop)
 
 
-def notify_from_player(data: str = None, volume: int = None):
-    if (data != None):
-        notify_ws_clients_threadsafe({"type": "now_playing", "now_playing": data})
+def notify_from_player(data: str, volume: int = None):
+    notify_ws_clients_threadsafe({"type": "now_playing", "now_playing": data})
     if (volume != None):
         notify_ws_clients_threadsafe({"type": "volume", "volume": volume})
 

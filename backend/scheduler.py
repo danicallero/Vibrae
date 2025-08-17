@@ -71,11 +71,12 @@ class Scheduler:
                     latest_scene = db.query(Scene).filter(Scene.id == scene.id).first()
                 finally:
                     db.close()
-
+                
+                #TODO: rethink the whole stop system. If client is modifying a routine to make it longer and stop event was already sent, this will prevent schedule run
                 if routine.id == self._last_routine_id and not self.player.is_playing():
-                    return  # don't restart same routine if stopped
+                    continue  # don't restart same routine if stopped
 
-                if not self.player.is_playing(): #start playback
+                elif not self.player.is_playing(): #start playback
                     logger.info(f"Starting playback: scene '{latest_scene.path}' at volume {routine.volume}")
                     self.player.play_scene(latest_scene.path, volume=routine.volume)
                     self._last_scene_id = latest_scene.id

@@ -226,7 +226,7 @@ const RoutinesScreen = () => {
                     keyboardShouldPersistTaps="handled"
                     renderItem={({ item }) => {
                         const scene = scenes.find(s => s.id === item.scene_id);
-                        const sceneName = scene?.name || "Sin nombre";
+                        const sceneName = scene?.name || null;
                         const weekdaysRaw = item.weekdays?.split(",").map(w => w.trim().toLowerCase()) || [];
                         const monthsRaw = item.months?.split(",").map(m => m.trim().toLowerCase()) || [];
 
@@ -234,7 +234,13 @@ const RoutinesScreen = () => {
                             <View style={styles.balanceCard}>
                                 <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
                                     <View>
-                                        <Text style={{ fontSize: 15, fontWeight: "600", color: COLORS.text }}>{sceneName}</Text>
+                                        {sceneName != null ? (
+                                            <Text style={{ fontSize: 15, fontWeight: "600", color: COLORS.text }}>{sceneName}</Text>
+                                        ) : (
+                                            <View style={{ flex: 1, flexDirection: "row"}}>
+                                                <Ionicons name="warning-outline" size={20} color="#e78f3cff" /> <Text style={{ fontSize: 15, color: COLORS.warning, fontWeight: "600" }}> ¡Sin escena!</Text>
+                                            </View>
+                                        )}
                                         <Text style={{ fontSize: 12, color: COLORS.textLight }}>
                                             {item.start_time} - {item.end_time}
                                         </Text>
@@ -270,7 +276,7 @@ const RoutinesScreen = () => {
                     }}
                 />
 
-                {/* MODAL DE OPCIONES */}
+                {/* Options modal */}
                 <Modal visible={!!optionsRoutineId} animationType="fade" transparent>
                     <TouchableWithoutFeedback onPress={() => setOptionsRoutineId(null)}>
                         <View style={sceneStyles.modalOverlay}>
@@ -309,7 +315,7 @@ const RoutinesScreen = () => {
                     </TouchableWithoutFeedback>
                 </Modal>
 
-                {/* Modal for create/edit */}
+                {/* Create/edit modal */}
                 <Modal visible={showModal} animationType="slide" transparent>
                     <KeyboardAvoidingView
                         behavior={Platform.OS === "ios" ? "padding" : undefined}

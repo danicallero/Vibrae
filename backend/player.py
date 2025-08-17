@@ -157,7 +157,7 @@ class Player:
         idle_since: Optional[float] = None  # track long-empty-queue to exit gracefully
         try:
             while not self._stop_event.is_set():
-                # Si hay deadline y ya venció, salir sin empezar nada nuevo
+                # If there's a deadline and it's already passed, exit without starting anything new
                 if self._pending_stop and self._pending_stop_deadline and time.time() >= self._pending_stop_deadline:
                     logger.info("Pending stop deadline reached before next song — exiting loop.")
                     break
@@ -184,7 +184,7 @@ class Player:
                 else:
                     idle_since = None
 
-                # Si hay intención de parar al terminar la canción previa, no arranques otra
+                # If there's a pending stop after the previous song, don't start another
                 if self._pending_stop and self._stop_after_song and not self.now_playing:
                     logger.info("Stop-after-song requested and previous song finished — exiting loop.")
                     break
@@ -205,7 +205,7 @@ class Player:
                 # Play current song with crossfade support
                 self._play_song_non_blocking(song, next_song)
 
-                # Si durante la canción nos han pedido parar, no avances la cola
+                # Do not advance the queue if stopping is pending
                 if self._pending_stop:
                     logger.info("Pending stop active after song finished — exiting loop.")
                     break
@@ -256,14 +256,14 @@ class Player:
                     current_vol = 0
                     logger.warning(f"Error getting current volume: {e}. Defaulting to 0.")
                 for i in range(steps):
-                    if self._stop_event.is_set():  # immediate stop
+                    if self._stop_event.is_set():  # Immediate stop
                         break
                     try:
                         state = player.get_state()
                         if state in (vlc.State.Ended, vlc.State.Stopped, vlc.State.Error):
                             break
                     except Exception:
-                        break  # ignore errors during fade
+                        break  # Ignore errors during fade
                     vol = int(max(0, min(100, current_vol * (1 - i / steps))))
                     try:
                         player.audio_set_volume(vol)
@@ -282,29 +282,48 @@ class Player:
 
     def _play_song_non_blocking(self, song: str, next_song: Optional[str], next_volume: Optional[int] = None):
         """Play a song with optional crossfade to next_song."""
+        # Initialize main player
         self._player_main = vlc.MediaPlayer(song)
-        self._player_main.audio_set_volume(0)
+        try:
+            self._player_main.audio_set_volume(0)
+        except Exception:
+            pass
         self._player_main.play()
 
         # Wait until VLC is actually playing
         t0 = time.time()
         while self._player_main.get_state() != vlc.State.Playing and time.time() - t0 < 2:
+            if self._stop_event.is_set():
+                break
             time.sleep(0.05)
 
-        # Fade-in main player
+        # Fade-in main player, with abortion if stop event is set
         for i in range(20):
-            vol = int(self.current_volume * (i + 1) / 20)
-            self._player_main.audio_set_volume(vol)
+            if self._stop_event.is_set():
+                break
+            vol = max(0, min(int(self.current_volume * (i + 1) / 20), 100))
+            try:
+                self._player_main.audio_set_volume(vol)
+            except Exception as e:
+                logger.warning(f"Error setting volume: {e}")
+                pass
             time.sleep(0.05)
 
         song_length = self._get_song_length(song)
-        fade_start = song_length - self.crossfade_sec if next_song else song_length
+        crossfade_dur = max(0.1, float(self.crossfade_sec))
+        fade_start = max(song_length - crossfade_dur, 1.0) if next_song else song_length
         start_time = time.time()
         next_started = False
         next_player: Optional[vlc.MediaPlayer] = None
         fade_start_time = None
 
-        while self._player_main.is_playing():
+        while True:
+            try:
+                if not self._player_main or not self._player_main.is_playing():
+                    break
+            except Exception:
+                break
+
             elapsed = time.time() - start_time
 
             # Stop immediately if global stop requested
@@ -312,6 +331,7 @@ class Player:
                 self._fade_out_and_stop(self._player_main)
                 if next_player:
                     self._fade_out_and_stop(next_player)
+                self.now_playing = None
                 return
 
             # stop after current timeout / after-song logic
@@ -322,29 +342,30 @@ class Player:
                     self._fade_out_and_stop(self._player_main)
                     if next_player:
                         self._fade_out_and_stop(next_player)
+                    self.now_playing = None
                     return
-
-                # Si no hay crossfade previsto, para al terminar la canción
+                # If there's no planned crossfade, stop with the song
                 if not next_song and elapsed >= song_length - 0.5:
                     logger.info("Song finished and pending stop requested — stopping now.")
                     self._fade_out_and_stop(self._player_main)
+                    self.now_playing = None
                     return
-
-                # Justo antes de iniciar el crossfade, no arranques la siguiente; para con fade
+                # Just before starting the crossfade, don't start the next one; fade out instead
                 if not next_started and elapsed >= fade_start:
                     logger.info("Pending stop active — ending after current song instead of crossfading.")
                     self._fade_out_and_stop(self._player_main)
+                    self.now_playing = None
                     return
 
             # Start crossfade (only if no pending stop)
             if not next_started and elapsed >= fade_start:
                 if self._pending_stop:
-                    # Seguridad adicional; debería haber salido arriba
+                    # Additional safety; should have exited above
                     logger.info("Pending stop active at crossfade gate — stopping current.")
                     self._fade_out_and_stop(self._player_main)
+                    self.now_playing = None
                     return
-
-                # recompute next song in case scene switched
+                # Recompute next song in case scene switched
                 with self._lock:
                     if self._switch_scene_request:
                         folder, volume = self._switch_scene_request
@@ -355,17 +376,30 @@ class Player:
                         self._load_and_shuffle(folder)
                         self.queue_pos = 0
 
-                    next_index = (self.queue_pos + 1) % len(self.queue)
-                    next_song = self.queue[next_index] if next_index != self.queue_pos else None
+                    if self.queue and len(self.queue) > 1:
+                        next_index = (self.queue_pos + 1) % len(self.queue)
+                        if 0 <= next_index < len(self.queue) and next_index != self.queue_pos:
+                            next_song = self.queue[next_index]
+                        else:
+                            next_song = None
+                    else:
+                        next_song = None
 
                 if next_song:
                     next_player = vlc.MediaPlayer(next_song)
+                    self._player_next = next_player
                     target_vol = next_volume if next_volume is not None else self.current_volume
-                    next_player.audio_set_volume(0)
+                    target_vol = max(0, min(100, int(target_vol)))
+                    try:
+                        next_player.audio_set_volume(0)
+                    except Exception:
+                        pass
                     next_player.play()
                     # wait until actually playing
                     t1 = time.time()
                     while next_player.get_state() != vlc.State.Playing and time.time() - t1 < 2:
+                        if self._stop_event.is_set():
+                            break
                         time.sleep(0.05)
                     next_started = True
                     fade_start_time = time.time()
@@ -373,15 +407,30 @@ class Player:
             # Crossfade logic
             if next_started and next_player and fade_start_time is not None:
                 fade_elapsed = time.time() - fade_start_time
-                ratio = min(fade_elapsed / self.crossfade_sec, 1.0)
-                self._player_main.audio_set_volume(int(self.current_volume * (1 - ratio)))
+                ratio = min(max(fade_elapsed / crossfade_dur, 0.0), 1.0)
+                try:
+                    self._player_main.audio_set_volume(int(max(0, min(100, self.current_volume * (1 - ratio)))))
+                except Exception:
+                    pass
                 target_vol = next_volume if next_volume is not None else self.current_volume
-                next_player.audio_set_volume(int(target_vol * ratio))
+                target_vol = max(0, min(100, int(target_vol)))
+                try:
+                    next_player.audio_set_volume(int(max(0, min(100, target_vol * ratio))))
+                except Exception:
+                    pass
                 if ratio >= 1.0:
-                    self._player_main.stop()
+                    try:
+                        self._player_main.stop()
+                    except Exception:
+                        pass
+                    # Hand-over: next becomes main
                     self._player_main = next_player
+                    self._player_next = None
                     self.now_playing = next_song
                     next_player = None
                     notify_from_player(self.now_playing, target_vol)
 
             time.sleep(0.05)
+
+        # Main finished by itself
+        return

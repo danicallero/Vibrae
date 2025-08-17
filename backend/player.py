@@ -247,15 +247,34 @@ class Player:
 
         def fade_thread():
             try:
-                current_vol = max(player.audio_get_volume(), 0)
+                # Clamp fade time
+                fade_sec = max(0.1, float(fade_sec))
                 steps = 20
+                try:
+                    current_vol = max(player.audio_get_volume(), 0)
+                except Exception as e:
+                    current_vol = 0
+                    logger.warning(f"Error getting current volume: {e}. Defaulting to 0.")
                 for i in range(steps):
                     if self._stop_event.is_set():  # immediate stop
                         break
-                    vol = int(current_vol * (1 - i / steps))
-                    player.audio_set_volume(max(min(vol, 100), 0))
+                    try:
+                        state = player.get_state()
+                        if state in (vlc.State.Ended, vlc.State.Stopped, vlc.State.Error):
+                            break
+                    except Exception:
+                        break  # ignore errors during fade
+                    vol = int(max(0, min(100, current_vol * (1 - i / steps))))
+                    try:
+                        player.audio_set_volume(vol)
+                    except Exception:
+                        pass
                     time.sleep(fade_sec / steps)
-                player.stop()
+                try:
+                    player.stop()
+                except Exception as e:
+                    logger.warning(f"Error stopping player: {e}")
+                    pass
             except Exception as e:
                 logger.warning(f"Error during fade_out: {e}")
 

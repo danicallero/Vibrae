@@ -103,36 +103,30 @@ class Player:
             self._switch_scene_request = (folder, volume)
 
     def stop(self, force: bool = True):
-        if self._stopping and force:
-            if self._player_main:
-                self._player_main.stop()
-            if self._player_next:
-                self._player_next.stop()
-            
-            self._player_main = None
-            self._player_next = None
+        def _reset():
+            for p in (self._player_main, self._player_next):
+                try: p and p.stop()
+                except Exception as e: logger.warning(f"Error stopping player: {e}")
+            self._player_main = self._player_next = None
             self.now_playing = None
-            self._pending_stop = False
+            self._pending_stop = self._stop_after_song = False
             self._pending_stop_deadline = None
-            self._stop_after_song = False
+            self._stop_event.clear()
+            notify_from_player(None)
+        
+        if self._stopping and force:
+            _reset()
+            self._stopping = False
             return
 
         self._stopping = True
         try:
             self._stop_event.set()
             if force:
-                if self._player_main:
-                    self._player_main.stop()
-                if self._player_next:
-                    self._player_next.stop()
+                _reset()
             if self._thread and self._thread.is_alive():
-                self._thread.join(timeout=5 if force else 310)
-            self._player_main = None
-            self._player_next = None
-            self.now_playing = None
-            self._pending_stop = False
-            self._pending_stop_deadline = None
-            self._stop_after_song = False
+                self._thread.join(timeout=5 if force else 310)  # Wait for the thread to finish
+            _reset()
         finally:
             self._stopping = False
 

@@ -277,7 +277,7 @@ export default function ScenesPage() {
           )}
         />
 
-        {/* MODAL DE CREAR / EDITAR */}
+        {/* Create/edit modal */}
         <Modal visible={showModal} animationType="slide" transparent>
           <DismissKeyboardWrapper>
             {Platform.OS === 'web' ? (
@@ -392,7 +392,7 @@ export default function ScenesPage() {
           </DismissKeyboardWrapper>
         </Modal>
 
-        {/* MODAL DE OPCIONES */}
+        {/* Options modal */}
         <Modal visible={!!optionsSceneId} animationType="fade" transparent>
           <TouchableWithoutFeedback onPress={() => setOptionsSceneId(null)}>
             <View style={sceneStyles.modalOverlay}>

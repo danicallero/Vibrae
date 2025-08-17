@@ -71,11 +71,21 @@ class Player:
 
     # Public
     def set_volume(self, volume: int):
-        self.current_volume = volume
-        if self._player_main:
-            self._player_main.audio_set_volume(volume)
-        if self._player_next:
-            self._player_next.audio_set_volume(volume)
+        new_volume = max(0, min(volume, 100))
+        self.current_volume = new_volume
+
+        try:
+            if self._player_main:
+                self._player_main.audio_set_volume(new_volume)
+        except Exception as e:
+            logger.warning(f"Error setting volume: {e}")
+            pass
+        try:
+            if self._player_next:
+                self._player_next.audio_set_volume(new_volume)
+        except Exception as e:
+            logger.warning(f"Error setting volume: {e}")
+            pass
 
     def get_volume(self) -> int:
         return self.current_volume

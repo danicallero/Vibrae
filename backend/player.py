@@ -144,7 +144,7 @@ class Player:
         """Pide parar al acabar la canción en curso o al llegar al timeout."""
         self._pending_stop = True
         self._stop_after_song = True
-        self._pending_stop_deadline = time.time() + timeout_sec
+        self._pending_stop_deadline = time.time() + max(0, timeout_sec)
 
     def get_now_playing(self) -> Optional[str]:
         return self.now_playing
@@ -154,6 +154,7 @@ class Player:
 
     # Playback loop (non-blocking)
     def _play_loop(self):
+        idle_since: Optional[float] = None  # track long-empty-queue to exit gracefully
         try:
             while not self._stop_event.is_set():
                 # Si hay deadline y ya venció, salir sin empezar nada nuevo
@@ -173,8 +174,15 @@ class Player:
                         self.queue_pos = 0
 
                 if not self.queue:
+                    if idle_since is None:
+                        idle_since = time.time()
+                    elif time.time() - idle_since > 10:
+                        logger.info("Queue has been empty for >10s — exiting loop.")
+                        break
                     time.sleep(0.2)
                     continue
+                else:
+                    idle_since = None
 
                 # Si hay intención de parar al terminar la canción previa, no arranques otra
                 if self._pending_stop and self._stop_after_song and not self.now_playing:
@@ -185,8 +193,11 @@ class Player:
                 song = self.queue[self.queue_pos]
 
                 # Compute next song index (will be recalculated in crossfade if scene changes)
-                next_index = (self.queue_pos + 1) % len(self.queue)
-                next_song = self.queue[next_index] if next_index != self.queue_pos else None
+                if len(self.queue) > 1:
+                    next_index = (self.queue_pos + 1) % len(self.queue)
+                    next_song = self.queue[next_index] if next_index != self.queue_pos else None
+                else:
+                    next_song = None
 
                 self.now_playing = song
                 notify_from_player(song, self.current_volume)
@@ -201,20 +212,30 @@ class Player:
 
                 # Move queue forward
                 with self._lock:
-                    self.queue_pos = (self.queue_pos + 1) % len(self.queue)
-                    if self.queue_pos == 0:
-                        random.shuffle(self.queue)
+                    if self.queue:
+                        self.queue_pos = (self.queue_pos + 1) % len(self.queue)
+                        if self.queue_pos == 0 and len(self.queue) > 1:
+                            random.shuffle(self.queue)
         finally:
-            # Limpieza al salir del bucle
+            # Loop exit cleanup
             try:
                 notify_from_player(None)
-
-                if self._player_main and self._player_main.is_playing():
-                    self._fade_out_and_stop(self._player_main)
-                if self._player_next and self._player_next.is_playing():
-                    self._fade_out_and_stop(self._player_next)
+                # Fade out players
+                try:
+                    if self._player_main and self._player_main.is_playing():
+                        self._fade_out_and_stop(self._player_main)
+                except Exception as e:
+                    logger.warning(f"Error during fade out of main player: {e}")
+                    pass
+                try:
+                    if self._player_next and self._player_next.is_playing():
+                        self._fade_out_and_stop(self._player_next)
+                except Exception as e:
+                    logger.warning(f"Error during fade out of next player: {e}")
+                    pass
             except Exception:
-                pass
+                pass  # Ignore ws errors
+
             self._player_main = None
             self._player_next = None
             self.now_playing = None

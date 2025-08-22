@@ -4,11 +4,12 @@ export const COLORS = {
   background: "#FFF8F3",
   text: "#4A3428",
   border: "#E5D3B7",
-  white: "#FFFFFF",
+  white: "#d9d0cbff",
   textLight: "#9A8478",
   expense: "#E74C3C",
   warning: "#e78f3cff",
   income: "#2ECC71",
   card: "#FFFFFF",
+  whiteText: "#FFFFFF",
   shadow: "#000000",
 };

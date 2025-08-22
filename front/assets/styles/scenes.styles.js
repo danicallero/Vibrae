@@ -1,48 +1,94 @@
-import { StyleSheet } from "react-native";
+// styles/scenes.styles.js
+import { StyleSheet, Platform } from "react-native";
 import { COLORS } from "../../constants/Colors";
+import { hexToRgba, glassTint, subtleShadow, readableModalBg } from "./theme";
+
+const TINT = 0.04;
+const MODAL_GLASS = glassTint({ color: COLORS.primary, alpha: TINT, blur: 14 });
 
 export const sceneStyles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
+    backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
   },
   modalContainer: {
     width: "100%",
-    backgroundColor: COLORS.card,
-    borderRadius: 20,
-    padding: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 5,
-    elevation: 4,
+    maxWidth: 760,
+    borderRadius: 14,
+    padding: 18,
+    ...(Platform.OS === "web" ? { backgroundColor: readableModalBg(0.94), backdropFilter: "blur(14px)" } : { backgroundColor: COLORS.card }),
+    ...subtleShadow({ spread: 14 }),
+    borderColor: hexToRgba(COLORS.primary, 0.04),
+    borderWidth: Platform.OS === "web" ? 1 : 0,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: COLORS.text,
+    marginBottom: 10,
+  },
+  modalText: {
+    fontSize: 14,
+    color: COLORS.text,
+    marginBottom: 12,
   },
   input: {
-    backgroundColor: COLORS.background,
-    borderColor: COLORS.border,
-    borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 16,
-    marginBottom: 16,
+    marginBottom: 12,
     color: COLORS.text,
+    ...(Platform.OS === "web" ? { backgroundColor: hexToRgba(COLORS.white, 0.98), borderWidth: 1, borderColor: hexToRgba(COLORS.primary, 0.02) } : { backgroundColor: COLORS.background, borderWidth: 1, borderColor: COLORS.border }),
   },
   tag: {
-    backgroundColor: COLORS.border,
     borderRadius: 16,
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    marginRight: 6,
+    paddingVertical: 6,
+    marginRight: 8,
     marginTop: 6,
-    alignSelf: "flex-start",
-},
-tagText: {
+    backgroundColor: hexToRgba(COLORS.primary, 0.09),
+    borderColor: hexToRgba(COLORS.primary, 0.14),
+    borderWidth: 1,
+  },
+  tagText: {
     fontSize: 12,
     color: COLORS.text,
-},
-
+    fontWeight: "600",
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 12,
+    marginTop: 6,
+  },
+  actionButtonPrimary: {
+    backgroundColor: COLORS.primary,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionButtonPrimaryText: {
+    color: COLORS.white,
+    fontWeight: "700",
+  },
+  actionButtonSecondary: {
+    backgroundColor: hexToRgba(COLORS.text, 0.06),
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: hexToRgba(COLORS.text, 0.04),
+  },
+  actionButtonSecondaryText: {
+    color: COLORS.text,
+    fontWeight: "600",
+  },
 });

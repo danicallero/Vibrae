@@ -1,5 +1,5 @@
 // styles/auth.styles.js
-import { StyleSheet } from "react-native";
+import { StyleSheet, Platform } from "react-native";
 import { COLORS } from "../../constants/Colors";
 
 export const styles = StyleSheet.create({
@@ -8,67 +8,87 @@ export const styles = StyleSheet.create({
     backgroundColor: COLORS.background,
     padding: 20,
     justifyContent: "center",
+    alignItems: "center",
   },
   illustration: {
-    height: 310,
+    height: 300,
     width: 300,
     resizeMode: "contain",
+    alignSelf: "center",
+    marginBottom: 6,
   },
+
   title: {
     fontSize: 32,
-    fontWeight: "bold",
+    fontWeight: "800",
     color: COLORS.text,
     marginVertical: 0,
     textAlign: "center",
   },
-    subtitle: {
+  subtitle: {
     fontSize: 13,
-    fontWeight: '500',
+    fontWeight: "500",
     color: COLORS.textLight,
-    marginVertical: 20,
+    marginVertical: 14,
     textAlign: "center",
   },
+
   input: {
-    backgroundColor: COLORS.white,
+    width: "100%",
     borderRadius: 12,
-    padding: 15,
-    marginBottom: 16,
+    padding: 14,
+    marginBottom: 14,
     borderWidth: 1,
-    borderColor: COLORS.border,
     fontSize: 16,
     color: COLORS.text,
+    ...(Platform.OS === "web"
+      ? { backgroundColor: "rgba(255,255,255,0.995)", borderColor: COLORS.border }
+      : { backgroundColor: COLORS.white, borderColor: COLORS.border }),
   },
+
   errorInput: {
     borderColor: COLORS.expense,
   },
+
   button: {
-    backgroundColor: COLORS.primary,
+    width: "100%",
     borderRadius: 12,
-    padding: 16,
+    padding: 14,
     alignItems: "center",
-    marginTop: 10,
-    marginBottom: 20,
+    marginTop: 8,
+    backgroundColor: COLORS.primary,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 4,
   },
+
   buttonText: {
-    color: COLORS.white,
+    color: COLORS.whiteText,
     fontSize: 18,
-    fontWeight: "600",
+    fontWeight: "700",
   },
+
   footerContainer: {
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
     gap: 8,
+    marginTop: 12,
   },
+
   footerText: {
     color: COLORS.text,
-    fontSize: 16,
+    fontSize: 12,
   },
+
   linkText: {
     color: COLORS.primary,
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: "600",
   },
+
   verificationContainer: {
     flex: 1,
     backgroundColor: COLORS.background,
@@ -76,17 +96,19 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+
   verificationTitle: {
     fontSize: 24,
-    fontWeight: "bold",
+    fontWeight: "700",
     color: COLORS.text,
     marginBottom: 20,
     textAlign: "center",
   },
+
   verificationInput: {
-    backgroundColor: COLORS.white,
+    backgroundColor: Platform.OS === "web" ? "rgba(255,255,255,0.995)" : COLORS.white,
     borderRadius: 12,
-    padding: 15,
+    padding: 14,
     marginBottom: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -97,20 +119,21 @@ export const styles = StyleSheet.create({
     letterSpacing: 2,
   },
 
-  // 🔴 Error styles
+  // Error
   errorBox: {
-    backgroundColor: "#FFE5E5",
+    backgroundColor: "#FFECEE",
     padding: 12,
     borderRadius: 8,
     borderLeftWidth: 4,
     borderLeftColor: COLORS.expense,
-    marginBottom: 16,
+    marginBottom: 12,
     flexDirection: "row",
     alignItems: "center",
     width: "100%",
   },
+
   errorText: {
-    color: COLORS.text,
+    color: COLORS.expense,
     marginLeft: 8,
     flex: 1,
     fontSize: 14,

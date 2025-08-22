@@ -1,6 +1,10 @@
 // styles/create.styles.js
-import { StyleSheet } from "react-native";
+import { StyleSheet, Platform } from "react-native";
 import { COLORS } from "../../constants/Colors";
+import { hexToRgba, glassTint, subtleShadow } from "./theme";
+
+const TINT = 0.055;
+const CARD_GLASS = glassTint({ color: COLORS.primary, alpha: TINT, blur: 10 });
 
 export const styles = StyleSheet.create({
   container: {
@@ -12,7 +16,7 @@ export const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     padding: 20,
-    borderBottomWidth: 1,
+    borderBottomWidth: Platform.OS === "web" ? 0 : 1,
     borderBottomColor: COLORS.border,
   },
   headerTitle: {
@@ -21,12 +25,13 @@ export const styles = StyleSheet.create({
     color: COLORS.text,
   },
   backButton: {
-    padding: 5,
+    padding: 8,
+    borderRadius: 10,
   },
   saveButtonContainer: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 6,
   },
   saveButtonDisabled: {
     opacity: 0.5,
@@ -37,19 +42,16 @@ export const styles = StyleSheet.create({
     fontWeight: "600",
   },
   card: {
-    backgroundColor: COLORS.card,
+    ...CARD_GLASS,
+    ...subtleShadow({ spread: 10 }),
     margin: 16,
-    borderRadius: 16,
+    borderRadius: 14,
     padding: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    ...(Platform.OS !== "web" ? { backgroundColor: COLORS.card } : { borderColor: hexToRgba(COLORS.primary, 0.04) }),
   },
   typeSelector: {
     flexDirection: "row",
-    marginBottom: 20,
+    marginBottom: 18,
     gap: 10,
   },
   typeButton: {
@@ -58,13 +60,12 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
-    borderRadius: 25,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    borderRadius: 22,
+    borderWidth: 0,
+    backgroundColor: Platform.OS === "web" ? "rgba(255,255,255,0.02)" : COLORS.background,
   },
   typeButtonActive: {
     backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
   },
   typeIcon: {
     marginRight: 8,
@@ -72,7 +73,7 @@ export const styles = StyleSheet.create({
   typeButtonText: {
     color: COLORS.text,
     fontSize: 16,
-    fontWeight: "500",
+    fontWeight: "600",
   },
   typeButtonTextActive: {
     color: COLORS.white,
@@ -82,19 +83,19 @@ export const styles = StyleSheet.create({
     alignItems: "center",
     borderBottomWidth: 1,
     borderBottomColor: COLORS.border,
-    paddingBottom: 16,
-    marginBottom: 20,
+    paddingBottom: 12,
+    marginBottom: 18,
   },
   currencySymbol: {
     fontSize: 32,
-    fontWeight: "bold",
+    fontWeight: "700",
     color: COLORS.text,
     marginRight: 8,
   },
   amountInput: {
     flex: 1,
-    fontSize: 36,
-    fontWeight: "bold",
+    fontSize: 34,
+    fontWeight: "700",
     color: COLORS.text,
   },
   inputContainer: {
@@ -103,9 +104,9 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: 12,
-    padding: 4,
-    marginBottom: 20,
-    backgroundColor: COLORS.white,
+    padding: 6,
+    marginBottom: 16,
+    backgroundColor: Platform.OS === "web" ? "rgba(255,255,255,0.02)" : COLORS.white,
   },
   inputIcon: {
     marginHorizontal: 12,
@@ -118,9 +119,9 @@ export const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: "600",
+    fontWeight: "700",
     color: COLORS.text,
-    marginBottom: 15,
+    marginBottom: 12,
     marginTop: 10,
     flexDirection: "row",
     alignItems: "center",
@@ -133,19 +134,17 @@ export const styles = StyleSheet.create({
   categoryButton: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.white,
+    borderRadius: 14,
+    borderWidth: 0,
+    backgroundColor: Platform.OS === "web" ? "rgba(255,255,255,0.02)" : COLORS.white,
   },
   categoryButtonActive: {
     backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
   },
   categoryIcon: {
-    marginRight: 6,
+    marginRight: 8,
   },
   categoryButtonText: {
     color: COLORS.text,

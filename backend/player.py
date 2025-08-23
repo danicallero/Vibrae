@@ -352,7 +352,7 @@ class Player:
                         break
                 except Exception:
                     break
-                new_vol = int(max(0, min(100, current_vol * (1 - (i + 1) / steps))))
+                new_vol = int(round(max(0, min(100, current_vol * (1 - (i + 1) / steps)))))
                 try:
                     player.audio_set_volume(new_vol)
                 except Exception:
@@ -381,12 +381,13 @@ class Player:
             self.now_playing = None
             return
 
+        # ---- robust start sequence: no mute reliance, readiness wait ----
         try:
-            self._player_main.audio_set_volume(0)
+            self._player_main.audio_set_mute(False)
         except Exception:
             pass
         try:
-            self._player_main.audio_set_mute(True)
+            self._player_main.audio_set_volume(0)
         except Exception:
             pass
         try:
@@ -395,40 +396,71 @@ class Player:
         except Exception:
             pass
 
+        ready = False
         t0 = _now()
-        while _now() - t0 < 2.0:
+        while _now() - t0 < 1.5:
             if self._stop_event.is_set() or epoch != self._play_epoch:
                 self._fade_out_and_stop_sync(self._player_main, fade_sec=0.2)
                 self.now_playing = None
                 return
             try:
                 st = self._player_main.get_state()
-                if st not in (vlc.State.Ended, vlc.State.Stopped, vlc.State.Error):
-                    break
             except Exception:
+                st = None
+            time_ms = -1
+            try:
+                time_ms = self._player_main.get_time()
+            except Exception:
+                pass
+            if st == vlc.State.Playing or (isinstance(time_ms, int) and time_ms > 0):
+                ready = True
                 break
+            try:
+                self._player_main.audio_set_mute(False)
+            except Exception:
+                pass
+            try:
+                self._player_main.audio_set_volume(0)
+            except Exception:
+                pass
             time.sleep(0.05)
 
-        try:
-            self._player_main.audio_set_volume(0)
-        except Exception:
-            pass
         try:
             self._player_main.audio_set_mute(False)
         except Exception:
             pass
+        try:
+            self._player_main.audio_set_volume(0)
+        except Exception:
+            pass
+        # ---- end start sequence ----
 
+        # Initial fade-in
         for i in range(20):
             if self._stop_event.is_set() or epoch != self._play_epoch:
                 self._fade_out_and_stop_sync(self._player_main, fade_sec=0.2)
                 self.now_playing = None
                 return
-            vol = max(0, min(int(self.current_volume * (i + 1) / 20), 100))
+            vol = int(round(max(0, min(100, self.current_volume * (i + 1) / 20))))
             try:
                 self._player_main.audio_set_volume(vol)
             except Exception:
                 pass
+            try:
+                self._player_main.audio_set_mute(False)
+            except Exception:
+                pass
             time.sleep(0.05)
+
+        # Snap to exact target to avoid cumulative rounding drift
+        try:
+            self._player_main.audio_set_mute(False)
+        except Exception:
+            pass
+        try:
+            self._player_main.audio_set_volume(int(max(0, min(100, self.current_volume))))
+        except Exception:
+            pass
 
         song_length = self._get_song_length(song)
         crossfade_dur = max(0.1, float(self.crossfade_sec))
@@ -451,9 +483,7 @@ class Player:
                 if st_main in terminal_states:
                     logger.debug(f"Main player id={id(self._player_main)} entered terminal state {st_main}")
                     # If we have already started the next player and it is active (not terminal),
-                    # promote it to become the main player instead of tearing it down. This
-                    # prevents the outer loop from creating a brand-new MediaPlayer for the
-                    # same song after its cleaned up.
+                    # promote it to become the main player instead of tearing it down.
                     try:
                         if next_started and next_player is not None:
                             try:
@@ -463,9 +493,6 @@ class Player:
                             if st_next not in terminal_states:
                                 old_main_id = id(self._player_main) if self._player_main is not None else None
                                 logger.info(f"Main entered terminal but next_player id={id(next_player)} is active; promoting to main")
-                                # Promote next_player to main but reset the timing context
-                                # so the newly promoted main doesn't immediately trigger another
-                                # crossfade based on elapsed time from the previous main.
                                 self._player_main = next_player
                                 with self._lock:
                                     if self._player_next is next_player:
@@ -480,8 +507,17 @@ class Player:
                                 self._promotion_guard_until = _now() + 0.35
                                 logger.info(f"Promoted next_player to main: new_main_id={self._last_handoff_main_id}, now_playing={self.now_playing}")
 
-                                # Reset playback timing for the promoted main so it gets a full
-                                # crossfade schedule starting from now.
+                                # IMPORTANT: snap volume to current target to avoid drift
+                                try:
+                                    self._player_main.audio_set_mute(False)
+                                except Exception:
+                                    pass
+                                try:
+                                    self._player_main.audio_set_volume(int(max(0, min(100, self.current_volume))))
+                                except Exception:
+                                    pass
+
+                                # Reset timing for the promoted main
                                 try:
                                     start_time = _now()
                                     song_length = self._get_song_length(self.now_playing)
@@ -491,7 +527,7 @@ class Player:
                                     start_time = _now()
                                     fade_start = _now() + 1.0
 
-                                # Clear local next references to avoid immediate chaining
+                                # Clear local next references
                                 next_player = None
                                 next_started = False
                                 fade_start_time = None
@@ -677,13 +713,13 @@ class Player:
                 fade_elapsed = _now() - fade_start_time
                 ratio = min(max(fade_elapsed / crossfade_dur, 0.0), 1.0)
                 try:
-                    self._player_main.audio_set_volume(int(max(0, min(100, self.current_volume * (1 - ratio)))))
+                    self._player_main.audio_set_volume(int(round(max(0, min(100, self.current_volume * (1 - ratio))))))
                 except Exception:
                     pass
                 target_vol = next_volume if next_volume is not None else self.current_volume
                 target_vol = max(0, min(100, int(target_vol)))
                 try:
-                    next_player.audio_set_volume(int(max(0, min(100, target_vol * ratio))))
+                    next_player.audio_set_volume(int(round(max(0, min(100, target_vol * ratio)))))
                 except Exception:
                     pass
                 if ratio >= 1.0:
@@ -708,6 +744,16 @@ class Player:
                     self._last_handoff_main_id = new_main_id
                     self._promotion_guard_until = _now() + 0.35
                     logger.info(f"Crossfade handoff complete: old_main_id={old_main_id}, new_main_id={new_main_id}, now_playing={self.now_playing}")
+
+                    # SNAP to exact target to eliminate any rounding drift
+                    try:
+                        self._player_main.audio_set_mute(False)
+                    except Exception:
+                        pass
+                    try:
+                        self._player_main.audio_set_volume(int(max(0, min(100, target_vol))))
+                    except Exception:
+                        pass
 
                     next_player = None
                     notify_from_player(self.now_playing, target_vol)

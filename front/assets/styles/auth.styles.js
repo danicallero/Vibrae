@@ -7,12 +7,8 @@ export const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
     padding: 20,
+    alignItems: "center",
     justifyContent: "center",
-  },
-  illustration: {
-    height: 310,
-    width: 300,
-    resizeMode: "contain",
   },
   title: {
     fontSize: 32,
@@ -21,7 +17,7 @@ export const styles = StyleSheet.create({
     marginVertical: 0,
     textAlign: "center",
   },
-    subtitle: {
+  subtitle: {
     fontSize: 13,
     fontWeight: '500',
     color: COLORS.textLight,
@@ -44,10 +40,9 @@ export const styles = StyleSheet.create({
   button: {
     backgroundColor: COLORS.primary,
     borderRadius: 12,
-    padding: 16,
+    padding: 13,
     alignItems: "center",
     marginTop: 10,
-    marginBottom: 20,
   },
   buttonText: {
     color: COLORS.white,
@@ -58,6 +53,7 @@ export const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
+    marginTop: 20,
     gap: 8,
   },
   footerText: {
@@ -66,24 +62,44 @@ export const styles = StyleSheet.create({
   },
   linkText: {
     color: COLORS.primary,
+    textDecorationLine: "underline",
     fontSize: 16,
-    fontWeight: "600",
+    fontWeight: "800",
   },
-  verificationContainer: {
+  modalOverlay: {
     flex: 1,
-    backgroundColor: COLORS.background,
-    padding: 20,
+    backgroundColor: "rgba(0,0,0,0.4)",
     justifyContent: "center",
     alignItems: "center",
+    padding: 50,
+    height: "100%",
   },
-  verificationTitle: {
+  creationContainer: {
+    backgroundColor: COLORS.background,
+    padding: 20,
+    justifyContent: "flex-start",
+    width: "100%",
+    borderRadius: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 5,
+    elevation: 4,
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 15,
+    marginTop: 6,
+  },
+  creationTitle: {
     fontSize: 24,
     fontWeight: "bold",
     color: COLORS.text,
     marginBottom: 20,
     textAlign: "center",
   },
-  verificationInput: {
+  creationInput: {
     backgroundColor: COLORS.white,
     borderRadius: 12,
     padding: 15,
@@ -96,8 +112,6 @@ export const styles = StyleSheet.create({
     textAlign: "center",
     letterSpacing: 2,
   },
-
-  // 🔴 Error styles
   errorBox: {
     backgroundColor: "#FFE5E5",
     padding: 12,

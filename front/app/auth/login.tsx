@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Modal,
   Platform,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
@@ -153,6 +154,10 @@ export default function Login(): JSX.Element {
       <KeyboardAwareScrollView contentContainerStyle={{ flexGrow: 1 }} enableOnAndroid enableAutomaticScroll extraScrollHeight={30}>
         <View style={[authStyles.container, { justifyContent: "center" }]}>
           <View style={[homeStyles.balanceCard, { width: "100%", maxWidth: 560 }]}>
+            <Image
+              source={require("../../assets/images/logo.png")}
+              style={{ width: 120, height: 120, marginBottom: 5, resizeMode: "contain", alignSelf: "center" }}
+            />
             <Text style={authStyles.title}>¡Bienvenido!</Text>
             <Text style={authStyles.subtitle}>Inicia sesión para hacer magia en el jardín</Text>
 

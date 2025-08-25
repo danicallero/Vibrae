@@ -13,14 +13,14 @@ export const styles = StyleSheet.create({
   title: {
     fontSize: 32,
     fontWeight: "bold",
-    color: COLORS.text,
+    color: COLORS.primaryEnd,
     marginVertical: 0,
     textAlign: "center",
   },
   subtitle: {
     fontSize: 13,
     fontWeight: '500',
-    color: COLORS.textLight,
+    color: COLORS.primaryMid,
     marginVertical: 20,
     textAlign: "center",
   },
@@ -38,11 +38,16 @@ export const styles = StyleSheet.create({
     borderColor: COLORS.expense,
   },
   button: {
-    backgroundColor: COLORS.primary,
+    backgroundColor: COLORS.primaryMid,
     borderRadius: 12,
     padding: 13,
     alignItems: "center",
     marginTop: 10,
+    shadowColor: COLORS.primaryEnd,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 4,
   },
   buttonText: {
     color: COLORS.white,
@@ -61,7 +66,7 @@ export const styles = StyleSheet.create({
     fontSize: 16,
   },
   linkText: {
-    color: COLORS.primary,
+    color: COLORS.primaryEnd,
     textDecorationLine: "underline",
     fontSize: 16,
     fontWeight: "800",
@@ -95,7 +100,7 @@ export const styles = StyleSheet.create({
   creationTitle: {
     fontSize: 24,
     fontWeight: "bold",
-    color: COLORS.text,
+    color: COLORS.primaryEnd,
     marginBottom: 20,
     textAlign: "center",
   },

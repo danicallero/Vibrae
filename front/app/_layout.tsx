@@ -10,12 +10,12 @@ export default function RootLayout() {
       <SafeAreaProvider>
         {/* THIS MUST render on first mount or navigation will crash */}
         <Stack
-        screenOptions={{
-        gestureEnabled: true,
-        gestureDirection: "horizontal",
-        headerShown: false,
-      }}
-    />
+          screenOptions={{
+            gestureEnabled: true,
+            gestureDirection: "horizontal",
+            headerShown: false,
+          }}
+        />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

@@ -1,6 +1,7 @@
+
 import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
-import { Slot, useRouter } from "expo-router";
+import { Slot, useRouter, Stack } from "expo-router";
 import { getToken } from "../../lib/storage";
 import { API_URL } from "@env";
 
@@ -33,7 +34,6 @@ export default function AuthLayout() {
     check();
   }, []);
 
-
   if (checking) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
@@ -42,5 +42,9 @@ export default function AuthLayout() {
     );
   }
 
-  return <Slot />;
+  return (
+    <Stack screenOptions={{ headerShown: false }}>
+      <Slot />
+    </Stack>
+  );
 }

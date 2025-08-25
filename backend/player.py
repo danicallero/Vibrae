@@ -26,7 +26,7 @@ class Player:
         self.current_volume = 100
         self.queue: List[str] = []
         self.queue_pos = 0
-        self.crossfade_sec = 10
+        self.crossfade_sec = 5
 
         # Threading
         self._stop_event = threading.Event()

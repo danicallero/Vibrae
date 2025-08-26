@@ -1,7 +1,7 @@
 # Vibrae
 
 <div align="center">
-	<img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License" />
+	<img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="GPLv3 License" />
 	<img src="https://img.shields.io/badge/Backend-FastAPI-green" alt="FastAPI" />
 	<img src="https://img.shields.io/badge/Frontend-Expo%20React%20Native-blueviolet" alt="Expo React Native" />
 	<img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Raspberry%20Pi-lightgrey" alt="Platform" />
@@ -206,7 +206,9 @@ Tips:
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the GNU GPLv3. See `LICENSE` for full terms.
+
+Note: Prior releases may have referenced MIT; as of this change, the codebase is distributed under GPLv3 going forward.
 
 <div align="center">
 Made with ❤️, Python, React Native, and Expo by <b>Dani Callero</b>

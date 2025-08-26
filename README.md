@@ -16,8 +16,10 @@
 3. [Folder Structure](#folder-structure)
 4. [Quick Start](#quick-start)
 5. [Deployment & Configuration](#deployment--configuration)
-6. [Screenshots](#screenshots)
-7. [License](#license)
+6. [Environment Variables](#environment-variables)
+7. [Logs & Monitoring](#logs--monitoring)
+9. [Screenshots](#screenshots)
+10. [License](#license)
 
 ---
 
@@ -86,15 +88,34 @@ cd vibrae
 
 ### 3. Configure environment variables
 
-Copy `.env.example` to `.env` and fill in your secrets:
+Copy the example files and edit values as needed:
 
-- `CLOUDFLARE_TUNNEL_TOKEN` (from Cloudflare)
-- Backend: `SECRET_KEY`, `ADMIN_TOKEN`, `MUSIC_DIR`
-- Frontend: `API_URL`, `EXPO_PUBLIC_API_URL`
+```bash
+cp .env.example .env
+cp front/.env.example front/.env
+```
+
+See [Environment Variables](#environment-variables) for details and defaults.
 
 ### 4. Add your music files
 
 Place music files in the `music/` folder, organized by scene (subfolder).
+
+### 4. Build the web frontend (one-time or after UI changes)
+
+From `front/`, export the static web build so the static server can serve it.
+
+Examples (run in `front/`):
+
+- Expo Dev server (interactive): `npx expo start --web`
+- Static export for run.sh: `npx expo export --platform web`
+
+Important: Web export
+- The static export may not include all PWA-related tags. After export, manually update `front/dist/index.html` to ensure these are present in `<head>`:
+	- `<link rel="manifest" href="/manifest.json">`
+	- `<link rel="apple-touch-icon" sizes="180x180" href="/assets/images/icon.png">`
+	- Optionally add: `<meta name="apple-mobile-web-app-capable" content="yes">` and `<meta name="theme-color" content="#31DAD5">`
+	- The manifest file is at `front/manifest.json`; the icon is at `front/assets/images/icon.png`.
 
 ### 5. Start all services
 
@@ -124,6 +145,56 @@ Visit your public Cloudflare Tunnel URL (e.g. `https://garden.example.com`) from
 - **Unified Scripts**: `run.sh` and `stop.sh` work on macOS and Linux, auto-detecting OS and starting/stopping all services.
 - **Frontend**: Built with Expo, exportable as static SPA or iOS app.
 - **Backend**: FastAPI, Uvicorn, SQLite database.
+
+---
+
+## Environment Variables
+
+This project uses two .env files:
+
+1) Root `.env` (consumed by `run.sh`, nginx templating, backend):
+
+- DOMAIN: your public domain (e.g. garden.example.com)
+- FRONTEND_PORT: static server port (default: 9081)
+- FRONTEND_DIST: path to the exported web build, relative to repo root (default: /front/dist)
+- BACKEND_PORT: backend API port (default: 8000)
+- BACKEND_MODULE: Uvicorn app module (default: backend.main:app)
+- MUSIC_DIR: path relative to repo root for music files (default: music)
+- SECRET_KEY: JWT signing secret used by backend auth (required)
+- LOG_LEVEL: backend/app log level (default: INFO)
+- LOG_KEEP: how many rotated files to keep per log (default: 5)
+- LOG_ROTATE_INTERVAL_HOURS: periodic rotation interval (default: 12)
+- NGINX_CONF: nginx config file path (default: nginx.conf)
+- CLOUDFLARE_TUNNEL_TOKEN: Cloudflare Tunnel token (required)
+
+Notes:
+- `run.sh` rotates logs under `logs/` and renders `nginx.conf` with `${DOMAIN}`, `${BACKEND_PORT}`, `${FRONTEND_PORT}`.
+- Periodic copy-truncate rotation runs in the background (every LOG_ROTATE_INTERVAL_HOURS) for backend.log, player.log, serve.log, and cloudflared.log.
+- `backend/auth.py` reads `SECRET_KEY` from environment; optionally a `backend/.env` can override it.
+
+2) Frontend `front/.env` (consumed at build time by the app):
+
+- API_URL: Base URL for the API. Examples:
+	- For production behind nginx: https://YOUR_DOMAIN/api
+	- For local with nginx: http://localhost/api
+	- For direct dev (bypassing nginx): http://localhost:8000
+
+Tips:
+- After changing `front/.env`, rebuild the web app (export) so the static files include the new value.
+
+---
+
+## Logs & Monitoring
+
+- Log files live under `logs/` with rotations stored in `logs/history/`.
+	- Current logs: `backend.log`, `player.log`, `serve.log`, `cloudflared.log`.
+	- History naming: `<name>-YYYYMMDD-HHMMSS.log`.
+- Periodic rotation is enabled (copy-truncate), configurable via `LOG_ROTATE_INTERVAL_HOURS` and `LOG_KEEP`.
+- Built-in Logs screen (frontend) lets you:
+	- Browse current logs and per-log history.
+	- View tail content with adjustable line count.
+	- Navigate history (“Latest” + timestamps).
+
 
 ---
 

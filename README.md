@@ -1,5 +1,7 @@
 # Vibrae
-
+<p align="center">
+  <img src="front/assets/images/logo.png" alt="Vibrae" width="200"/>
+</p>
 <div align="center">
 	<img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="GPLv3 License" />
 	<img src="https://img.shields.io/badge/Backend-FastAPI-green" alt="FastAPI" />

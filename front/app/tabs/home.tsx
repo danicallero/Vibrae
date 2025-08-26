@@ -107,7 +107,7 @@ export default function HomePage() {
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
     function connectWs() {
       ws = new WebSocket(
-          API_URL.replace(/^http/, "ws") + "/control/ws"
+        API_URL.replace(/^http/, "ws") + "/control/ws"
       );
       wsRef.current = ws;
       ws.onopen = () => {
@@ -334,6 +334,13 @@ export default function HomePage() {
             >
               <Ionicons name="color-palette-outline" size={20} color="#fff" />
               <Text style={[styles.addButtonText, { fontSize: 16 }]}>Escenas</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.addButton, { paddingVertical: 14, borderRadius: 28 }]}
+              onPress={() => router.push("/tabs/logs")}
+            >
+              <Ionicons name="document-text-outline" size={20} color="#fff" />
+              <Text style={[styles.addButtonText, { fontSize: 16 }]}>Logs</Text>
             </TouchableOpacity>
           </View>
 

@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from backend.routes import users, scenes, schedule, control
+from backend.routes import users, scenes, schedule, control, logs
 from fastapi.middleware.cors import CORSMiddleware
 from backend.player import Player
 from backend.scheduler import Scheduler
@@ -38,3 +38,4 @@ app.include_router(users.router)
 app.include_router(scenes.router)
 app.include_router(schedule.router)
 app.include_router(control.router)
+app.include_router(logs.router)

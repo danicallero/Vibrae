@@ -1,41 +1,50 @@
+# Vibrae (root) .gitignore
+
+# Project data (local only)
 data/
 music/
+
+# Python bytecode and virtual environments
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 env/
 venv/
-.env
-*.env
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Logs
+logs/
 *.log
 
-# Node / frontend ignores
+# Environment variables
+.env
+*.env
+
+# Frontend/Node (top-level)
 node_modules/
 dist/
 .expo/
 *.expo
 *.expo-shared/
 front/dist/
-front/ios/
 front/node_modules/
 front/android/
+front/ios/
 
-# OS files (macOS)
+# Build outputs and caches
+build/
+.cache/
+coverage/
+.coverage
+
+# macOS finder files
 .DS_Store
 
-# IDE / Editor files (adjust if you use something else)
+# IDE / editor files
 .vscode/
 .idea/
 *.swp
-
-# Logs
-logs/
-*.log
-
-# Build outputs or caches
-build/
-.cache/
-
-# Environment files
-*.env

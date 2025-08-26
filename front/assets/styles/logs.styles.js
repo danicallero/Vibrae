@@ -49,4 +49,32 @@ export const styles = StyleSheet.create({
     chipActive: { backgroundColor: COLORS.primaryEnd },
     chipText: { color: COLORS.primaryEnd, fontSize: 12 },
     chipTextActive: { color: COLORS.white },
+
+    // Colored log formatting
+    time: { color: '#9CA3AF' }, // gray-400
+    level: { fontWeight: '700' },
+    levelInfo: { color: '#22c55e' }, // green-500
+    levelWarn: { color: '#f59e0b' }, // amber-500
+    levelError: { color: '#ef4444' }, // red-500
+    levelDebug: { color: '#9CA3AF' }, // gray-400
+    levelCritical: { color: '#dc2626' }, // red-600
+    logger: { color: '#60a5fa' }, // blue-400
+    message: { color: '#ffffff' },
+    stackLine: { color: '#D1D5DB' }, // gray-300
+    headerLine: { color: '#34d399', fontWeight: '700' }, // emerald-400
+
+    // Nginx / access log helpers
+    ip: { color: '#A78BFA' }, // violet-400
+    bracketDate: { color: '#9CA3AF' },
+    method: { fontWeight: '700' },
+    methodGet: { color: '#22d3ee' }, // cyan-400
+    methodPost: { color: '#a78bfa' }, // violet-400
+    methodPut: { color: '#f59e0b' }, // amber-500
+    methodDelete: { color: '#ef4444' }, // red-500
+    methodOther: { color: '#10b981' }, // emerald-500
+    path: { color: '#ffffff' },
+    status2xx: { color: '#22c55e', fontWeight: '700' },
+    status3xx: { color: '#38bdf8', fontWeight: '700' },
+    status4xx: { color: '#f59e0b', fontWeight: '700' },
+    status5xx: { color: '#ef4444', fontWeight: '700' },
 });

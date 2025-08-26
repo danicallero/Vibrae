@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// app/tabs/logs.tsx
+
 import React, { useCallback, useEffect, useState } from 'react';
 import { SafeAreaView, View, Text, TouchableOpacity, ActivityIndicator, TextInput, Platform, RefreshControl, ScrollView, Pressable, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';

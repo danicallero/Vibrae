@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// lib/storage.ts
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 

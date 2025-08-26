@@ -1,4 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // styles/logs.styles.js
+
 import { StyleSheet, Platform } from 'react-native';
 import { COLORS } from '../../constants/Colors';
 

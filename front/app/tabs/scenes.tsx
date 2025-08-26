@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// app/tabs/scenes.tsx
+
 import { useEffect, useState } from "react";
 import {
   View,

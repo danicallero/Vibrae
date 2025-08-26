@@ -1,4 +1,11 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# license notice
+printf "%sVibrae%s (C) 2025 danicallero\n" "$BOLD" "$RESET"
+printf "This is free software released under the GNU GPLv3; you may redistribute it under certain conditions.\n"
+printf "There is NO WARRANTY, to the extent permitted by law. See LICENSE for details.\n\n"
+
 set -e
 python3 -m venv venv
 source venv/bin/activate

@@ -1,3 +1,6 @@
+# main.py
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 from fastapi import FastAPI
 from backend.routes import users, scenes, schedule, control, logs
 from fastapi.middleware.cors import CORSMiddleware

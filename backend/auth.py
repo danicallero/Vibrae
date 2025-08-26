@@ -1,3 +1,6 @@
+# auth.py
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 from jose import jwt, JWTError, ExpiredSignatureError
 from passlib.context import CryptContext
 from datetime import datetime, timedelta

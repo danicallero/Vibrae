@@ -1,3 +1,6 @@
+# models.py
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 from sqlalchemy import Column, Integer, String, ForeignKey, Time
 from sqlalchemy.orm import relationship
 from backend.db import Base

@@ -1,4 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // constants/colors.js
+
 export const COLORS = {
   primary: "#5285e2ff",
   primaryMid: "#3AAEF0",

@@ -1,3 +1,6 @@
+# users.py
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel

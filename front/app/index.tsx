@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// app/index.tsx
+
 import { useEffect } from "react";
 import { useRouter, useRootNavigationState } from "expo-router";
 import { View, ActivityIndicator } from "react-native";

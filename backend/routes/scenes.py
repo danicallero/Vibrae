@@ -1,3 +1,6 @@
+# scenes.py
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 from typing import Optional

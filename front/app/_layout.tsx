@@ -1,4 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // app/_layout.tsx
+
 import { Stack } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";

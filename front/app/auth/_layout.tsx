@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// app/auth/_layout.tsx
 
 import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";

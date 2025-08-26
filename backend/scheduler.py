@@ -1,3 +1,6 @@
+# scheduler.py
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 import threading
 import time
 import logging

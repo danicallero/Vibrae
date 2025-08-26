@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// app/tabs/home.tsx
+
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,

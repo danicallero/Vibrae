@@ -1,4 +1,6 @@
 # control.py
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from backend.auth import decode_token
 from pydantic import BaseModel

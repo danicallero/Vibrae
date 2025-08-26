@@ -1,3 +1,6 @@
+# logs.py
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 from fastapi import APIRouter, Depends, HTTPException, Header, Response
 from fastapi.responses import FileResponse
 from typing import Optional, List, Dict

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// app/auth/login.tsx
+
 import React, { JSX, useEffect, useState } from "react";
 import { useRouter } from "expo-router";
 import {

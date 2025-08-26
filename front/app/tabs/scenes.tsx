@@ -26,7 +26,7 @@ import { styles } from "../../assets/styles/home.styles";
 import { sceneStyles } from "../../assets/styles/scenes.styles";
 import { COLORS } from "../../constants/Colors";
 import { getToken } from "../../lib/storage";
-import { useRouter, useNavigation } from "expo-router";
+import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import DropDownPicker from "react-native-dropdown-picker";
 import { API_URL } from "@env";
@@ -40,7 +40,6 @@ type Scene = {
 
 export default function ScenesPage() {
   const router = useRouter();
-  const navigation = useNavigation();
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [folders, setFolders] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);

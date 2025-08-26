@@ -10,10 +10,10 @@ module.exports = function (api) {
           path: '.env',
           allowUndefined: true,
         },
-        'react-native-reanimated/plugin',
       ],
+      // NOTE: This plugin must be listed last
+      'react-native-reanimated/plugin',
     ],
   };
 };
-
-const { defineConfig } = require('eslint/config');
+ 

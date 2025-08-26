@@ -30,6 +30,7 @@ front/android/
 *.swp
 
 # Logs
+logs/
 *.log
 
 # Build outputs or caches

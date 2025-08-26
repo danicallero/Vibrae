@@ -9,11 +9,6 @@ from backend.player import Player
 
 # Configure logger for scheduler
 logger = logging.getLogger("garden_music.scheduler")
-logging.basicConfig(
-    filename="garden_music.log",
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-)
 
 class Scheduler:
     def __init__(self, player: Player, poll_interval: int = 10):

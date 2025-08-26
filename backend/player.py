@@ -8,11 +8,6 @@ from typing import List, Optional, Tuple
 from backend.routes.control import notify_from_player
 
 logger = logging.getLogger("garden_music.player")
-logging.basicConfig(
-    filename="garden_music.log",
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-)
 
 
 def _now() -> float:

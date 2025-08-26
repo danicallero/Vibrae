@@ -34,13 +34,18 @@ rotate_log() {
     ext="${name##*.}"
     if [ "$ext" = "$name" ]; then ext="log"; base="$name"; else base="${name%.*}"; fi
     local rotated="$history_dir/${base}-${ts}.${ext}"
-    mv "$file" "$rotated" 2>/dev/null || cp "$file" "$rotated" && : > "$file"
+    cp "$file" "$rotated" 2>/dev/null || cat "$file" > "$rotated"
+    : > "$file"
     # prune older rotations for this base
     ls -1t "$history_dir/${base}-"*."$ext" 2>/dev/null | sed -e "1,${keep}d" | xargs -I {} rm -f -- {} 2>/dev/null || true
   else
     : > "$file"
   fi
 }
+
+# Rotation policy (configurable via env)
+LOG_KEEP="${LOG_KEEP:-5}"
+LOG_ROTATE_INTERVAL_HOURS="${LOG_ROTATE_INTERVAL_HOURS:-12}"
 
 # Prefix each output line with a timestamp and append to the given log file
 log_cmd() {
@@ -75,17 +80,17 @@ if [ ! -d "$SERVE_ROOT" ]; then
   err "missing frontend dir: $SERVE_ROOT"
   exit 1
 fi
-rotate_log "$LOG_DIR/serve.log" 5 "$HISTORY_DIR"
+rotate_log "$LOG_DIR/serve.log" "$LOG_KEEP" "$HISTORY_DIR"
 echo "----- $(date) start serve on :$FRONTEND_PORT -----" >> "$LOG_DIR/serve.log"
 log_cmd "$LOG_DIR/serve.log" npx serve -s "$SERVE_ROOT" -l "$FRONTEND_PORT"
 
 # Start backend API
 info "backend: port $BACKEND_PORT"
-rotate_log "$LOG_DIR/backend.log" 5 "$HISTORY_DIR"
+rotate_log "$LOG_DIR/backend.log" "$LOG_KEEP" "$HISTORY_DIR"
 echo "----- $(date) start uvicorn on :$BACKEND_PORT ($BACKEND_MODULE) -----" >> "$LOG_DIR/backend.log"
 
 # Build a logging config for uvicorn: uvicorn logs -> backend.log; app logs -> player.log
-rotate_log "$LOG_DIR/player.log" 5 "$HISTORY_DIR"
+rotate_log "$LOG_DIR/player.log" "$LOG_KEEP" "$HISTORY_DIR"
 echo "----- $(date) start player logs -----" >> "$LOG_DIR/player.log"
 LOG_CFG="$SCRIPT_DIR/backend/logging.ini"
 LOG_LEVEL_EFF="$(echo "${LOG_LEVEL:-INFO}" | tr '[:lower:]' '[:upper:]')"
@@ -142,7 +147,7 @@ start_cloudflared_with_retry() {
     # Rotate log once (on first attempt), then append
     local CF_LOG="$LOG_DIR/cloudflared.log"
     if [ "$attempt" -eq 1 ]; then
-      rotate_log "$CF_LOG" 5 "$HISTORY_DIR"
+  rotate_log "$CF_LOG" "$LOG_KEEP" "$HISTORY_DIR"
     fi
     echo "----- $(date) cloudflared attempt $attempt -----" >> "$CF_LOG"
     # Start
@@ -175,5 +180,24 @@ start_cloudflared_with_retry() {
 }
 
 start_cloudflared_with_retry || exit 1
+
+## Start periodic rotation in background (nohup)
+(
+  set -e
+  INTERVAL_HRS="${LOG_ROTATE_INTERVAL_HOURS:-12}"
+  case "$INTERVAL_HRS" in
+    *[!0-9]*|"") INTERVAL_HRS=12 ;;
+  esac
+  INTERVAL_SEC=$(( INTERVAL_HRS * 3600 ))
+  printf '%s\n' "[info] periodic log rotation every ${INTERVAL_HRS}h (keep ${LOG_KEEP})" >> "$LOG_DIR/serve.log"
+  while true; do
+    sleep "$INTERVAL_SEC"
+    rotate_log "$LOG_DIR/backend.log" "$LOG_KEEP" "$HISTORY_DIR"
+    rotate_log "$LOG_DIR/player.log" "$LOG_KEEP" "$HISTORY_DIR"
+    rotate_log "$LOG_DIR/serve.log" "$LOG_KEEP" "$HISTORY_DIR"
+    rotate_log "$LOG_DIR/cloudflared.log" "$LOG_KEEP" "$HISTORY_DIR"
+  done
+) >/dev/null 2>&1 &
+echo $! > "$LOG_DIR/log-rotate.pid"
 
 ok "done."

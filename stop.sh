@@ -13,6 +13,9 @@ warn(){ printf "%s[warn]%s %s\n" "$YELLOW" "$RESET" "$*"; }
 err(){ printf "%s[err ]%s %s\n" "$RED" "$RESET" "$*" 1>&2; }
 
 # Stop services quietly if not running
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LOG_DIR="$SCRIPT_DIR/logs"
+
 info "stopping frontend server"
 pkill -f "npx serve" >/dev/null 2>&1 || true
 pkill -f "serve -s" >/dev/null 2>&1 || true
@@ -23,6 +26,16 @@ pkill -f "uvicorn" >/dev/null 2>&1 || true
 
 info "stopping cloudflared"
 pkill -f "cloudflared" >/dev/null 2>&1 || true
+
+# Stop background log rotation loop
+if [ -f "$LOG_DIR/log-rotate.pid" ]; then
+  info "stopping log rotation loop"
+  ROT_PID="$(cat "$LOG_DIR/log-rotate.pid" 2>/dev/null || true)"
+  if [ -n "$ROT_PID" ]; then
+    kill "$ROT_PID" >/dev/null 2>&1 || true
+  fi
+  rm -f "$LOG_DIR/log-rotate.pid" >/dev/null 2>&1 || true
+fi
 
 if [[ "$(uname)" == "Darwin" ]]; then
   info "nginx (macOS): stop"

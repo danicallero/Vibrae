@@ -107,9 +107,7 @@ export default function HomePage() {
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
     function connectWs() {
       ws = new WebSocket(
-        API_URL.startsWith("http")
-          ? API_URL.replace(/^http/, "ws") + "/control/ws"
-          : "ws://localhost:8000/control/ws"
+          API_URL.replace(/^http/, "ws") + "/control/ws"
       );
       wsRef.current = ws;
       ws.onopen = () => {

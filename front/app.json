@@ -23,6 +23,7 @@
     "web": {
       "bundler": "metro",
       "output": "static",
+  "exclude": ["_sitemap", "auth/*", "tabs/*", "sitemap"],
       "favicon": "./assets/images/icon.png",
       "display": "standalone",
       "themeColor": "#31DAD5",

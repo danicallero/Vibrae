@@ -73,27 +73,50 @@ export default function Login(): JSX.Element {
     setLoading(true);
     setLoginError("");
 
+    // Add a small timeout and handle server-down vs invalid credentials
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
     try {
       const res = await fetch(`${API_URL}/users/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
+        signal: controller.signal,
       });
 
-      const data = await res.json().catch(() => ({} as any));
+      clearTimeout(timeoutId);
+
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch (_) {
+        // non-JSON response; keep data as empty
+      }
 
       if (!res.ok) {
-        setLoginError(data.detail || "Credenciales incorrectas.");
+        if (res.status >= 500) {
+          setLoginError("Servidor no disponible. Inténtalo de nuevo más tarde.");
+        } else if (res.status === 401 || res.status === 400) {
+          setLoginError(data?.detail || "Credenciales incorrectas.");
+        } else {
+          setLoginError(data?.detail || "Error al iniciar sesión.");
+        }
         setLoading(false);
         return;
       }
 
       await saveToken(data.access_token);
       router.replace("/tabs/home");
-    } catch (err) {
+    } catch (err: any) {
       console.error("Login error:", err);
-      setLoginError("Fallo del servidor.");
+      const isAbort = err?.name === "AbortError";
+      setLoginError(
+        isAbort
+          ? "Tiempo de espera agotado. Verifica tu conexión."
+          : "Servidor no disponible."
+      );
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   };

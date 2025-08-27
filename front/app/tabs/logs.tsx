@@ -3,6 +3,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { SafeAreaView, View, Text, TouchableOpacity, ActivityIndicator, TextInput, Platform, RefreshControl, ScrollView, Pressable, useWindowDimensions } from 'react-native';
+import { SafeAreaView as SafeAreaViewCtx } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { API_URL } from '@env';
@@ -450,7 +451,7 @@ export default function LogsScreen() {
 
       {isSmall && sidebarOpen && (
         <View style={styles.overlay}>
-          <View style={styles.sidebarSheet}>
+          <SafeAreaViewCtx edges={['top']} style={styles.sidebarSheet}>
             <View style={styles.sidebarHeader}>
               <Text style={styles.section}>Logs</Text>
               <TouchableOpacity style={[styles.btn, { backgroundColor: '#6b7280' }]} onPress={() => setSidebarOpen(false)}>
@@ -458,7 +459,7 @@ export default function LogsScreen() {
               </TouchableOpacity>
             </View>
             {SidebarContent}
-          </View>
+          </SafeAreaViewCtx>
           <Pressable style={styles.backdrop} onPress={() => setSidebarOpen(false)} />
         </View>
       )}

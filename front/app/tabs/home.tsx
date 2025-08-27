@@ -19,6 +19,7 @@ import { styles } from "../../assets/styles/home.styles";
 import { COLORS } from "../../constants/Colors";
 import { API_URL } from "@env";
 import { getToken, deleteToken } from "../../lib/storage";
+import { apiFetch } from "../../lib/api";
 
 export default function HomePage() {
   const router = useRouter();
@@ -30,11 +31,7 @@ export default function HomePage() {
   // Check if a schedule should be playing (for Resume button)
   const checkShouldBePlaying = useCallback(async () => {
     try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/schedule/`, {
-        method: "GET",
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch(`${API_URL}/schedule/`, { method: "GET" });
       const routines = await res.json();
       const now = new Date();
       const nowStr = now.toTimeString().slice(0, 5);
@@ -108,10 +105,10 @@ export default function HomePage() {
   useEffect(() => {
     let ws: WebSocket | null = null;
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
-    function connectWs() {
-      ws = new WebSocket(
-        API_URL.replace(/^http/, "ws") + "/control/ws"
-      );
+    async function connectWs() {
+      const token = await getToken();
+      const url = API_URL.replace(/^http/, "ws") + "/control/ws" + (token ? `?token=${encodeURIComponent(token)}` : "");
+      ws = new WebSocket(url);
       wsRef.current = ws;
       ws.onopen = () => {
         // no-op
@@ -148,7 +145,7 @@ export default function HomePage() {
         } catch { }
       };
     }
-    connectWs();
+  connectWs();
     return () => {
       if (ws) ws.close();
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
@@ -158,12 +155,7 @@ export default function HomePage() {
 
   const handleStop = async () => {
     try {
-      const token = await getToken();
-      await fetch(`${API_URL}/control/stop`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-      });
+  await apiFetch(`${API_URL}/control/stop`, { method: "POST" });
       setNowPlaying(null);
       checkShouldBePlaying();
       setLoading(true);
@@ -180,12 +172,7 @@ export default function HomePage() {
   const handleVolumeChange = async (value: number) => {
     try {
       const rounded = Math.round(value);
-      const token = await getToken();
-      await fetch(`${API_URL}/control/volume?level=${rounded}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-      });
+  await apiFetch(`${API_URL}/control/volume?level=${rounded}`, { method: "POST" });
       setVolume(rounded);
       volumeShared.value = rounded;
     } catch (err) {
@@ -244,23 +231,14 @@ export default function HomePage() {
                   onPress={async () => {
                     // Resume schedule
                     try {
-                      const token = await getToken();
-                      await fetch(`${API_URL}/control/resume`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ token }),
-                      });
+                      await apiFetch(`${API_URL}/control/resume`, { method: "POST" });
                       setLoading(true); // Wait for WebSocket update
                       firstWsMsg.current = false;
                       setTimeout(async () => {
                         checkShouldBePlaying();
                         // Fallback: poll now_playing if WebSocket hasn't updated
                         try {
-                          const res = await fetch(`${API_URL}/control/now_playing`, {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ token }),
-                          });
+                          const res = await apiFetch(`${API_URL}/control/now_playing`, { method: "POST" });
                           const data = await res.json();
                           if (data.now_playing) {
                             const filename = data.now_playing.split("/").pop();

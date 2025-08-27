@@ -9,24 +9,20 @@ import os
 import time
 import re
 
-from backend.auth import decode_token
+from backend.auth import get_current_user, decode_token
 
 
 router = APIRouter(prefix="/logs", tags=["logs"])
 
 
-# Auth
-def token_from_header(Authorization: Optional[str] = Header(None)):
-    if not Authorization or not Authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-    return decode_token(Authorization[len("Bearer "):])
+_unused = decode_token  # keep import used for token_from_header_or_query
 
 
 def token_from_header_or_query(
     Authorization: Optional[str] = Header(None),
     token: Optional[str] = None,
 ):
-    # Accept either Bearer header or token query param
+    # Accept either Bearer header or token query param (for optional clients)
     if token:
         return decode_token(token)
     if Authorization and Authorization.startswith("Bearer "):
@@ -63,7 +59,7 @@ def _file_info(p: Path) -> Dict:
 
 
 @router.get("/")
-def list_logs(token: dict = Depends(token_from_header)):
+def list_logs(user = Depends(get_current_user)):
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -87,7 +83,7 @@ def list_logs(token: dict = Depends(token_from_header)):
 
 
 @router.get("/history")
-def list_log_history(base: str, token: dict = Depends(token_from_header)):
+def list_log_history(base: str, user = Depends(get_current_user)):
     # Normalize base: accept with or without .log
     base_norm = base
     if base_norm.endswith(".log"):
@@ -166,7 +162,7 @@ def get_log_content(
     file: str,
     tail: int = 200,
     history: bool = False,
-    token: dict = Depends(token_from_header),
+    user = Depends(get_current_user),
 ):
     path = _resolve_log_path(file, history)
     try:

@@ -1,9 +1,8 @@
 # control.py
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from backend.auth import decode_token
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends, status
+from backend.auth import decode_token, get_current_user
 import asyncio
 
 router = APIRouter(prefix="/control", tags=["control"])
@@ -40,14 +39,8 @@ def notify_from_player(data: str, volume: int = None):
         notify_ws_clients_threadsafe({"type": "volume", "volume": volume})
 
 
-class BaseTokenRequest(BaseModel):
-    token: str
-
-
 @router.post("/volume")
-def set_volume(level: int, request: BaseTokenRequest):
-    if not request.token or not decode_token(request.token):
-        raise HTTPException(status_code=401, detail="Invalid or missing token")
+def set_volume(level: int, user = Depends(get_current_user)):
     if not (0 <= level <= 100):
         raise HTTPException(status_code=400, detail="Volume must be 0-100")
     from backend.main import player
@@ -57,9 +50,7 @@ def set_volume(level: int, request: BaseTokenRequest):
 
 
 @router.post("/stop")
-def stop_music(request: BaseTokenRequest):
-    if not request.token or not decode_token(request.token):
-        raise HTTPException(status_code=401, detail="Invalid or missing token")
+def stop_music(user = Depends(get_current_user)):
     from backend.main import player
     player.stop()
     notify_ws_clients_threadsafe({"type": "now_playing", "now_playing": None})
@@ -67,25 +58,19 @@ def stop_music(request: BaseTokenRequest):
 
 
 @router.post("/now_playing")
-def get_now_playing(request: BaseTokenRequest):
-    if not request.token or not decode_token(request.token):
-        raise HTTPException(status_code=401, detail="Invalid or missing token")
+def get_now_playing(user = Depends(get_current_user)):
     from backend.main import player
     return {"now_playing": player.get_now_playing()}
 
 
 @router.post("/get_volume")
-def get_volume(request: BaseTokenRequest):
-    if not request.token or not decode_token(request.token):
-        raise HTTPException(status_code=401, detail="Invalid or missing token")
+def get_volume(user = Depends(get_current_user)):
     from backend.main import player
     return {"volume": player.get_volume()}
 
 
 @router.post("/resume")
-def resume_schedule(request: BaseTokenRequest):
-    if not request.token or not decode_token(request.token):
-        raise HTTPException(status_code=401, detail="Invalid or missing token")
+def resume_schedule(user = Depends(get_current_user)):
     from backend.main import scheduler, player
     scheduler.resume_if_should_play()
     notify_ws_clients_threadsafe({"type": "now_playing", "now_playing": player.get_now_playing()})
@@ -95,6 +80,17 @@ def resume_schedule(request: BaseTokenRequest):
 
 @router.websocket("/ws")
 async def ws_updates(websocket: WebSocket):
+    # Expect token in query string (e.g., /ws?token=...)
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    try:
+        decode_token(token)
+    except Exception:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     await websocket.accept()
     ws_clients.add(websocket)
     try:

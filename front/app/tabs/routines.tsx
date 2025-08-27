@@ -21,6 +21,7 @@ import DropDownPicker from "react-native-dropdown-picker";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { getToken } from "../../lib/storage";
+import { apiFetch } from "../../lib/api";
 import { useRouter } from "expo-router";
 import { styles } from "../../assets/styles/home.styles";
 import { sceneStyles } from "../../assets/styles/scenes.styles";
@@ -314,10 +315,9 @@ const RoutinesScreen = () => {
     const fetchData = useCallback(async () => {
         setLoading(true);
         try {
-            const token = await getToken();
             const [routineRes, scenesRes] = await Promise.all([
-                fetch(`${API_URL}/schedule/`, { headers: { Authorization: `Bearer ${token}` } }),
-                fetch(`${API_URL}/scenes/`, { headers: { Authorization: `Bearer ${token}` } })
+                apiFetch(`${API_URL}/schedule/`),
+                apiFetch(`${API_URL}/scenes/`)
             ]);
             if (!routineRes.ok || !scenesRes.ok) throw new Error("API error");
             setRoutines(await routineRes.json());
@@ -365,7 +365,6 @@ const RoutinesScreen = () => {
             return;
         }
         try {
-            const token = await getToken();
             const method = isEditing ? "PUT" : "POST";
             const url = isEditing
                 ? `${API_URL}/schedule/${editingId}`
@@ -380,11 +379,10 @@ const RoutinesScreen = () => {
                 volume: Math.round(volume),
             };
 
-            const res = await fetch(url, {
+            const res = await apiFetch(url, {
                 method,
                 headers: {
                     "Content-Type": "application/json",
-                    Authorization: `Bearer ${token}`,
                 },
                 body: JSON.stringify(body),
             });
@@ -404,7 +402,6 @@ const RoutinesScreen = () => {
         const r = routines.find((x) => x.id === id);
         if (!r) return;
         try {
-            const token = await getToken();
             const body = {
                 scene_id: r.scene_id,
                 start_time: r.start_time,
@@ -413,9 +410,9 @@ const RoutinesScreen = () => {
                 months: r.months || "",
                 volume: r.volume,
             };
-            const res = await fetch(`${API_URL}/schedule/`, {
+            const res = await apiFetch(`${API_URL}/schedule/`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
             });
             if (!res.ok) throw new Error("dup failed");
@@ -427,12 +424,8 @@ const RoutinesScreen = () => {
 
     const deleteRoutine = async (id: number) => {
         try {
-            const token = await getToken();
-            await fetch(`${API_URL}/schedule/${id}/`, {
+            await apiFetch(`${API_URL}/schedule/${id}/`, {
                 method: "DELETE",
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                },
             });
             fetchData();
         } catch (err) {

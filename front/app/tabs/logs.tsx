@@ -7,7 +7,7 @@ import { SafeAreaView as SafeAreaViewCtx } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { API_URL } from '@env';
-import { getToken, deleteToken } from '../../lib/storage';
+import { apiFetch } from '../../lib/api';
 import { styles } from '../../assets/styles/logs.styles';
 import { COLORS } from '@/constants/Colors';
 
@@ -46,19 +46,7 @@ export default function LogsScreen() {
   const fetchIndex = useCallback(async () => {
     try {
       setError(null);
-      const token = await getToken();
-      if (!token) {
-        router.replace('/auth/login');
-        return;
-      }
-      const res = await fetch(`${API_URL}/logs/`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.status === 401) {
-        await deleteToken();
-        router.replace('/auth/login');
-        return;
-      }
+      const res = await apiFetch(`${API_URL}/logs/`);
       if (!res.ok) throw new Error(`Failed: ${res.status}`);
       const data = (await res.json()) as LogsIndex;
       setIndex(data);
@@ -72,11 +60,9 @@ export default function LogsScreen() {
   const fetchContent = useCallback(async () => {
     if (!selected) return;
     try {
-      const token = await getToken();
       const t = parseInt(tail, 10);
-      const res = await fetch(
-        `${API_URL}/logs/content?file=${encodeURIComponent(selected.file)}&history=${selected.history ? 'true' : 'false'}&tail=${isFinite(t) && t > 0 ? t : 300}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+      const res = await apiFetch(
+        `${API_URL}/logs/content?file=${encodeURIComponent(selected.file)}&history=${selected.history ? 'true' : 'false'}&tail=${isFinite(t) && t > 0 ? t : 300}`
       );
       if (!res.ok) throw new Error(`Failed: ${res.status}`);
       const text = await res.text();
@@ -91,11 +77,8 @@ export default function LogsScreen() {
 
   const fetchPerLogHistory = useCallback(async (baseFile: string) => {
     try {
-      const token = await getToken();
       const base = baseFile.endsWith('.log') ? baseFile : `${baseFile}.log`;
-      const res = await fetch(`${API_URL}/logs/history?base=${encodeURIComponent(base)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await apiFetch(`${API_URL}/logs/history?base=${encodeURIComponent(base)}`);
       if (!res.ok) throw new Error(`Failed: ${res.status}`);
       const data = await res.json();
       setPerLogHistory((data.history || []) as LogFile[]);

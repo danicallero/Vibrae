@@ -1,13 +1,13 @@
 # scenes.py
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import os
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
-from backend.auth import decode_token
+from backend.auth import get_current_user
 from backend.db import SessionLocal
 from backend.models import Scene
 
@@ -24,10 +24,7 @@ def get_db():
     finally:
         db.close()
 
-def token_from_header(Authorization: Optional[str] = Header(None)):
-    if not Authorization or not Authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-    return decode_token(Authorization[len("Bearer "):])
+# Use OAuth2 bearer with dependency injection
 
 class SceneCreateRequest(BaseModel):
     name: str
@@ -38,11 +35,11 @@ class SceneUpdateRequest(BaseModel):
     path: Optional[str] = None
 
 @router.get("/")
-def list_scenes(token: dict = Depends(token_from_header), db: Session = Depends(get_db)):
+def list_scenes(user = Depends(get_current_user), db: Session = Depends(get_db)):
     return db.query(Scene).all()
 
 @router.get("/folders/")
-def list_music_folders(token: dict = Depends(token_from_header)):
+def list_music_folders(user = Depends(get_current_user)):
     try:
         folders = [
             f for f in os.listdir(MUSIC_DIR)
@@ -55,7 +52,7 @@ def list_music_folders(token: dict = Depends(token_from_header)):
 @router.post("/")
 def create_scene(
     data: SceneCreateRequest,
-    token: dict = Depends(token_from_header),
+    user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     scene = Scene(name=data.name, path=data.path)
@@ -67,7 +64,7 @@ def create_scene(
 @router.delete("/{scene_id}/")
 def delete_scene(
     scene_id: int,
-    token: dict = Depends(token_from_header),
+    user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     scene = db.query(Scene).filter(Scene.id == scene_id).first()
@@ -81,7 +78,7 @@ def delete_scene(
 def update_scene(
     scene_id: int,
     update: SceneUpdateRequest,
-    token: dict = Depends(token_from_header),
+    user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     scene = db.query(Scene).filter(Scene.id == scene_id).first()

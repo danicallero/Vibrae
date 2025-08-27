@@ -1,12 +1,12 @@
 # schedule.py
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
 
-from backend.auth import decode_token
+from backend.auth import get_current_user
 from backend.db import SessionLocal
 from backend.models import Routine
 
@@ -21,10 +21,7 @@ def get_db():
     finally:
         db.close()
 
-def token_from_header(Authorization: Optional[str] = Header(None)):
-    if not Authorization or not Authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-    return decode_token(Authorization[len("Bearer "):])
+# Use centralized OAuth2 current user dependency
 
 # --- Pydantic Schemas ---
 
@@ -48,7 +45,7 @@ class RoutineUpdateRequest(BaseModel):
 
 @router.get("/")
 def list_routines(
-    token: dict = Depends(token_from_header),
+    user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     return db.query(Routine).all()
@@ -56,7 +53,7 @@ def list_routines(
 @router.post("/")
 def create_routine(
     data: RoutineCreateRequest,
-    token: dict = Depends(token_from_header),
+    user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     routine = Routine(
@@ -76,7 +73,7 @@ def create_routine(
 def update_routine(
     routine_id: int,
     update: RoutineUpdateRequest,
-    token: dict = Depends(token_from_header),
+    user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     routine = db.query(Routine).filter(Routine.id == routine_id).first()
@@ -104,7 +101,7 @@ def update_routine(
 @router.delete("/{routine_id}/")
 def delete_routine(
     routine_id: int,
-    token: dict = Depends(token_from_header),
+    user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     routine = db.query(Routine).filter(Routine.id == routine_id).first()

@@ -15,14 +15,15 @@ from backend.auth import (
     create_access_token,
     decode_token,
     ExpiredSignatureError,
-    JWTError
+    JWTError,
+    oauth2_scheme,
 )
 
 load_dotenv()
 
 router = APIRouter(prefix="/users", tags=["users"])
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="users/login")
+# Use shared oauth2 scheme from auth module
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 
 def get_db():

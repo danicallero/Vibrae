@@ -8,6 +8,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 import os
 from typing import Optional, Dict
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.orm import Session
+from backend.db import SessionLocal
+from backend.models import User
 
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path, override=True)
@@ -44,3 +49,30 @@ def decode_token(token: str) -> Dict:
         raise ExpiredSignatureError("Token caducado")
     except JWTError:
         raise JWTError("Token inválido")
+
+# OAuth2 bearer scheme (Password flow)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="users/login")
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+    try:
+        payload = decode_token(token)
+    except ExpiredSignatureError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="El token ha caducado. Inicia sesión de nuevo.")
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido.")
+
+    username = payload.get("sub")
+    if not username:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido (sin sujeto)")
+
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no encontrado")
+    return user

@@ -29,6 +29,7 @@ import { styles } from "../../assets/styles/home.styles";
 import { sceneStyles } from "../../assets/styles/scenes.styles";
 import { COLORS } from "../../constants/Colors";
 import { getToken } from "../../lib/storage";
+import { apiFetch } from "../../lib/api";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import DropDownPicker from "react-native-dropdown-picker";
@@ -60,11 +61,7 @@ export default function ScenesPage() {
   const fetchScenes = async () => {
     setLoading(true);
     try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/scenes/`, {
-        method: "GET",
-        headers: { Authorization: `Bearer ${token}` },
-      });
+  const res = await apiFetch(`${API_URL}/scenes/`, { method: "GET" });
 
       if (!res.ok) throw new Error("Failed to fetch scenes");
       const data = await res.json();
@@ -81,13 +78,7 @@ export default function ScenesPage() {
 
   const fetchFolders = async () => {
     try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/scenes/folders/`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+  const res = await apiFetch(`${API_URL}/scenes/folders/`, { method: "GET" });
 
       if (!res.ok) throw new Error("Error al obtener carpetas");
       const data = await res.json();
@@ -104,12 +95,10 @@ export default function ScenesPage() {
     }
 
     try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/scenes/`, {
+  const res = await apiFetch(`${API_URL}/scenes/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ name, path: selectedPath }),
       });
@@ -130,12 +119,10 @@ export default function ScenesPage() {
     }
 
     try {
-      const token = await getToken();
-      const res = await fetch(`${API_URL}/scenes/${editingSceneId}/`, {
+  const res = await apiFetch(`${API_URL}/scenes/${editingSceneId}/`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ name, path: selectedPath }),
       });
@@ -151,12 +138,8 @@ export default function ScenesPage() {
 
   const deleteScene = async (id: number) => {
     try {
-      const token = await getToken();
-      await fetch(`${API_URL}/scenes/${id}/`, {
+  await apiFetch(`${API_URL}/scenes/${id}/`, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
       });
       fetchScenes();
     } catch (err) {

@@ -33,6 +33,7 @@ export const sceneStyles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 16,
     color: COLORS.text,
+    width: "100%",
   },
   tag: {
     backgroundColor: COLORS.border,

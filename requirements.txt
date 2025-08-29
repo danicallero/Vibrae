@@ -1,7 +1,9 @@
 
 fastapi
 uvicorn
+websockets
 passlib[bcrypt]
+bcrypt<4.0
 pydantic
 sqlalchemy
 python-jose[cryptography]

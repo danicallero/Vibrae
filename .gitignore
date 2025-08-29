@@ -22,7 +22,8 @@ logs/
 
 # Environment variables
 .env
-*.env
+.env.save
+.installed
 
 # Frontend/Node (top-level)
 node_modules/

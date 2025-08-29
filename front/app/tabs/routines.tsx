@@ -26,7 +26,6 @@ import { useRouter } from "expo-router";
 import { styles } from "../../assets/styles/home.styles";
 import { sceneStyles } from "../../assets/styles/scenes.styles";
 import { COLORS } from "../../constants/Colors";
-import { API_URL } from "@env";
 import { Slider } from "react-native-awesome-slider";
 import { useSharedValue } from "react-native-reanimated";
 
@@ -316,8 +315,8 @@ const RoutinesScreen = () => {
         setLoading(true);
         try {
             const [routineRes, scenesRes] = await Promise.all([
-                apiFetch(`${API_URL}/schedule/`),
-                apiFetch(`${API_URL}/scenes/`)
+                apiFetch(`/schedule/`),
+                apiFetch(`/scenes/`)
             ]);
             if (!routineRes.ok || !scenesRes.ok) throw new Error("API error");
             setRoutines(await routineRes.json());
@@ -367,8 +366,8 @@ const RoutinesScreen = () => {
         try {
             const method = isEditing ? "PUT" : "POST";
             const url = isEditing
-                ? `${API_URL}/schedule/${editingId}`
-                : `${API_URL}/schedule/`;
+                ? `/schedule/${editingId}`
+                : `/schedule/`;
 
             const body = {
                 scene_id: selectedScene,
@@ -410,7 +409,7 @@ const RoutinesScreen = () => {
                 months: r.months || "",
                 volume: r.volume,
             };
-            const res = await apiFetch(`${API_URL}/schedule/`, {
+            const res = await apiFetch(`/schedule/`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
@@ -424,7 +423,7 @@ const RoutinesScreen = () => {
 
     const deleteRoutine = async (id: number) => {
         try {
-            await apiFetch(`${API_URL}/schedule/${id}/`, {
+            await apiFetch(`/schedule/${id}/`, {
                 method: "DELETE",
             });
             fetchData();

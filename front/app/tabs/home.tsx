@@ -17,9 +17,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { styles } from "../../assets/styles/home.styles";
 import { COLORS } from "../../constants/Colors";
-import { API_URL } from "@env";
 import { getToken, deleteToken } from "../../lib/storage";
 import { apiFetch } from "../../lib/api";
+import { buildApiUrl, getWebSocketUrl } from "../../lib/config";
 
 export default function HomePage() {
   const router = useRouter();
@@ -31,10 +31,10 @@ export default function HomePage() {
   // Check if a schedule should be playing (for Resume button)
   const checkShouldBePlaying = useCallback(async () => {
     try {
-      const res = await apiFetch(`${API_URL}/schedule/`, { method: "GET" });
+  const res = await apiFetch('/schedule/', { method: "GET" });
       const routines = await res.json();
       const now = new Date();
-      const nowStr = now.toTimeString().slice(0, 5);
+  const nowStr = now.toTimeString().slice(0, 5); 
       const weekday = now.toLocaleString("en-US", { weekday: "short" }).toLowerCase().slice(0, 3);
       const month = now.toLocaleString("en-US", { month: "short" }).toLowerCase().slice(0, 3);
       let found = false;
@@ -88,11 +88,11 @@ export default function HomePage() {
         return;
       }
       try {
-        const res = await fetch(`${API_URL}/users/validate`, {
+  const res = await fetch(buildApiUrl('/users/validate'), {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (!res.ok) throw new Error();
+  if (!res.ok) throw new Error(); 
       } catch {
         await deleteToken();
         router.replace("/auth/login");
@@ -107,10 +107,10 @@ export default function HomePage() {
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
     async function connectWs() {
       const token = await getToken();
-      const url = API_URL.replace(/^http/, "ws") + "/control/ws" + (token ? `?token=${encodeURIComponent(token)}` : "");
+  const url = getWebSocketUrl('/control/ws') + (token ? `?token=${encodeURIComponent(token)}` : "");
       ws = new WebSocket(url);
       wsRef.current = ws;
-      ws.onopen = () => {
+  ws.onopen = () => { 
         // no-op
       };
       ws.onclose = () => {
@@ -155,7 +155,7 @@ export default function HomePage() {
 
   const handleStop = async () => {
     try {
-  await apiFetch(`${API_URL}/control/stop`, { method: "POST" });
+  await apiFetch('/control/stop', { method: "POST" });
       setNowPlaying(null);
       checkShouldBePlaying();
       setLoading(true);
@@ -172,7 +172,7 @@ export default function HomePage() {
   const handleVolumeChange = async (value: number) => {
     try {
       const rounded = Math.round(value);
-  await apiFetch(`${API_URL}/control/volume?level=${rounded}`, { method: "POST" });
+  await apiFetch(`/control/volume?level=${rounded}`, { method: "POST" });
       setVolume(rounded);
       volumeShared.value = rounded;
     } catch (err) {
@@ -231,17 +231,17 @@ export default function HomePage() {
                   onPress={async () => {
                     // Resume schedule
                     try {
-                      await apiFetch(`${API_URL}/control/resume`, { method: "POST" });
+                      await apiFetch('/control/resume', { method: "POST" });
                       setLoading(true); // Wait for WebSocket update
                       firstWsMsg.current = false;
                       setTimeout(async () => {
                         checkShouldBePlaying();
                         // Fallback: poll now_playing if WebSocket hasn't updated
                         try {
-                          const res = await apiFetch(`${API_URL}/control/now_playing`, { method: "POST" });
+                          const res = await apiFetch('/control/now_playing', { method: "POST" });
                           const data = await res.json();
                           if (data.now_playing) {
-                            const filename = data.now_playing.split("/").pop();
+                              const filename = data.now_playing.split("/").pop(); 
                             setNowPlaying(filename || null);
                             setLoading(false);
                           }

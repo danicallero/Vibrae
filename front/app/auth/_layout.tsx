@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { Slot, useRouter, Stack } from "expo-router";
 import { getToken } from "../../lib/storage";
-import { API_URL } from "@env";
+import { apiFetch } from "../../lib/api";
 
 export default function AuthLayout() {
   const [checking, setChecking] = useState(true);
@@ -19,12 +19,7 @@ export default function AuthLayout() {
         return;
       }
 
-      const res = await fetch(`${API_URL}/users/validate`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-        },
-      });
+  const res = await apiFetch("/users/validate", { method: "POST" });
 
       if (res.ok) {
         router.replace("/tabs/home");

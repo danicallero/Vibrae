@@ -2,6 +2,7 @@
 // lib/api.ts
 import { router } from "expo-router";
 import { getToken, deleteToken } from "./storage";
+import { buildApiUrl } from "./config";
 
 /**
  * fetch with Authorization header automatically.
@@ -27,7 +28,8 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
   }
   headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(input, { ...init, headers });
+  const url = buildApiUrl(input);
+  const res = await fetch(url, { ...init, headers });
   if (res.status === 401) {
     try { await deleteToken(); } catch {}
   try { router.replace("/auth/login"); } catch {}
@@ -35,3 +37,5 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
   }
   return res;
 }
+
+export { buildApiUrl };

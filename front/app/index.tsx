@@ -5,7 +5,7 @@ import { useEffect } from "react";
 import { useRouter, useRootNavigationState } from "expo-router";
 import { View, ActivityIndicator } from "react-native";
 import { getToken, deleteToken } from "../lib/storage";
-import { API_URL } from "@env";
+import { apiFetch } from "../lib/api";
 
 export default function Index() {
   const router = useRouter();
@@ -23,12 +23,7 @@ export default function Index() {
       }
 
       try {
-        const res = await fetch(`${API_URL}/users/validate`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
+  const res = await apiFetch("/users/validate", { method: "POST" });
 
         if (!res.ok) {
           throw new Error("Token no válido");

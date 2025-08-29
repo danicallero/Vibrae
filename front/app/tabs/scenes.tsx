@@ -33,7 +33,6 @@ import { apiFetch } from "../../lib/api";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import DropDownPicker from "react-native-dropdown-picker";
-import { API_URL } from "@env";
 
 type Scene = {
   id: number;
@@ -61,7 +60,7 @@ export default function ScenesPage() {
   const fetchScenes = async () => {
     setLoading(true);
     try {
-  const res = await apiFetch(`${API_URL}/scenes/`, { method: "GET" });
+  const res = await apiFetch(`/scenes/`, { method: "GET" });
 
       if (!res.ok) throw new Error("Failed to fetch scenes");
       const data = await res.json();
@@ -78,7 +77,7 @@ export default function ScenesPage() {
 
   const fetchFolders = async () => {
     try {
-  const res = await apiFetch(`${API_URL}/scenes/folders/`, { method: "GET" });
+  const res = await apiFetch(`/scenes/folders/`, { method: "GET" });
 
       if (!res.ok) throw new Error("Error al obtener carpetas");
       const data = await res.json();
@@ -95,7 +94,7 @@ export default function ScenesPage() {
     }
 
     try {
-  const res = await apiFetch(`${API_URL}/scenes/`, {
+  const res = await apiFetch(`/scenes/`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -119,7 +118,7 @@ export default function ScenesPage() {
     }
 
     try {
-  const res = await apiFetch(`${API_URL}/scenes/${editingSceneId}/`, {
+  const res = await apiFetch(`/scenes/${editingSceneId}/`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -138,7 +137,7 @@ export default function ScenesPage() {
 
   const deleteScene = async (id: number) => {
     try {
-  await apiFetch(`${API_URL}/scenes/${id}/`, {
+  await apiFetch(`/scenes/${id}/`, {
         method: "DELETE",
       });
       fetchScenes();

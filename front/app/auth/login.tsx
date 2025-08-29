@@ -20,7 +20,7 @@ import { styles as authStyles } from "../../assets/styles/auth.styles";
 import { styles as homeStyles } from "../../assets/styles/home.styles";
 import { COLORS } from "../../constants/Colors";
 import { getToken, saveToken } from "../../lib/storage";
-import { API_URL } from "@env";
+import { buildApiUrl } from "../../lib/config";
 
 export default function Login(): JSX.Element {
   const router = useRouter();
@@ -47,7 +47,7 @@ export default function Login(): JSX.Element {
       const token = await getToken();
       if (!token) return;
       try {
-        const res = await fetch(`${API_URL}/users/validate`, {
+  const res = await fetch(buildApiUrl("/users/validate"), {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -77,7 +77,7 @@ export default function Login(): JSX.Element {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
     try {
-      const res = await fetch(`${API_URL}/users/login`, {
+  const res = await fetch(buildApiUrl("/users/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
@@ -135,7 +135,7 @@ export default function Login(): JSX.Element {
     setRegisterError("");
 
     try {
-      const res = await fetch(`${API_URL}/users`, {
+  const res = await fetch(buildApiUrl("/users"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -172,7 +172,7 @@ export default function Login(): JSX.Element {
     newUsername.trim().length > 0 &&
     newPassword.trim().length > 0 &&
     repeatPassword.trim().length > 0 &&
-    adminToken.trim().length > 0 &&
+    {/*adminToken.trim().length > 0 &&*/}
     !loading;
 
   return (

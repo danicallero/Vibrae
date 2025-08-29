@@ -4,7 +4,6 @@
 import { useEffect, useState } from "react";
 import { View, ActivityIndicator } from "react-native";
 import { Stack, Slot } from "expo-router";
-import { API_URL } from "@env";
 import { apiFetch } from "../../lib/api";
 
 export default function TabsLayout() {
@@ -15,7 +14,7 @@ export default function TabsLayout() {
     (async () => {
       try {
         // Validate token; apiFetch will redirect on 401
-        await apiFetch(`${API_URL}/users/validate`, { method: "POST" });
+  await apiFetch("/users/validate", { method: "POST" });
       } catch {
         // apiFetch already handled redirect
       } finally {

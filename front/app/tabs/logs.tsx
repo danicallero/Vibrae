@@ -3,10 +3,9 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { SafeAreaView, View, Text, TouchableOpacity, ActivityIndicator, TextInput, Platform, RefreshControl, ScrollView, Pressable, useWindowDimensions } from 'react-native';
-import { SafeAreaView as SafeAreaViewCtx } from 'react-native-safe-area-context';
+import { SafeAreaView as SafeAreaViewContext } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { API_URL } from '@env';
 import { apiFetch } from '../../lib/api';
 import { styles } from '../../assets/styles/logs.styles';
 import { COLORS } from '@/constants/Colors';
@@ -46,7 +45,7 @@ export default function LogsScreen() {
   const fetchIndex = useCallback(async () => {
     try {
       setError(null);
-      const res = await apiFetch(`${API_URL}/logs/`);
+  const res = await apiFetch('/logs/');
       if (!res.ok) throw new Error(`Failed: ${res.status}`);
       const data = (await res.json()) as LogsIndex;
       setIndex(data);
@@ -61,9 +60,7 @@ export default function LogsScreen() {
     if (!selected) return;
     try {
       const t = parseInt(tail, 10);
-      const res = await apiFetch(
-        `${API_URL}/logs/content?file=${encodeURIComponent(selected.file)}&history=${selected.history ? 'true' : 'false'}&tail=${isFinite(t) && t > 0 ? t : 300}`
-      );
+  const res = await apiFetch(`/logs/content?file=${encodeURIComponent(selected.file)}&history=${selected.history ? 'true' : 'false'}&tail=${isFinite(t) && t > 0 ? t : 300}`);
       if (!res.ok) throw new Error(`Failed: ${res.status}`);
       const text = await res.text();
   setContent(text);
@@ -78,7 +75,7 @@ export default function LogsScreen() {
   const fetchPerLogHistory = useCallback(async (baseFile: string) => {
     try {
       const base = baseFile.endsWith('.log') ? baseFile : `${baseFile}.log`;
-      const res = await apiFetch(`${API_URL}/logs/history?base=${encodeURIComponent(base)}`);
+  const res = await apiFetch(`/logs/history?base=${encodeURIComponent(base)}`);
       if (!res.ok) throw new Error(`Failed: ${res.status}`);
       const data = await res.json();
       setPerLogHistory((data.history || []) as LogFile[]);
@@ -434,7 +431,7 @@ export default function LogsScreen() {
 
       {isSmall && sidebarOpen && (
         <View style={styles.overlay}>
-          <SafeAreaViewCtx edges={['top']} style={styles.sidebarSheet}>
+          <SafeAreaViewContext edges={['top']} style={styles.sidebarSheet}>
             <View style={styles.sidebarHeader}>
               <Text style={styles.section}>Logs</Text>
               <TouchableOpacity style={[styles.btn, { backgroundColor: '#6b7280' }]} onPress={() => setSidebarOpen(false)}>
@@ -442,7 +439,7 @@ export default function LogsScreen() {
               </TouchableOpacity>
             </View>
             {SidebarContent}
-          </SafeAreaViewCtx>
+          </SafeAreaViewContext>
           <Pressable style={styles.backdrop} onPress={() => setSidebarOpen(false)} />
         </View>
       )}

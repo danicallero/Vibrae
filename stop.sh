@@ -14,12 +14,17 @@ warn(){ printf "%s[warn]%s %s\n" "$YELLOW" "$RESET" "$*"; }
 err(){ printf "%s[err ]%s %s\n" "$RED" "$RESET" "$*" 1>&2; }
 
 # license notice
-printf "%sVibrae%s (C) 2025 danicallero\n" "$BOLD" "$RESET"
+printf "\n%sVibrae%s (C) 2025 Daniel Callero\n" "$BOLD" "$RESET"
 printf "This is free software released under the GNU GPLv3; you may redistribute it under certain conditions.\n"
 printf "There is NO WARRANTY, to the extent permitted by law. See LICENSE for details.\n\n"
 
 # Stop services quietly if not running
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Prefer venv if present (not required for stopping processes)
+if [ -d "$SCRIPT_DIR/venv" ]; then
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/venv/bin/activate"
+fi
 LOG_DIR="$SCRIPT_DIR/logs"
 
 info "stopping frontend server"

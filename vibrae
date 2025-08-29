@@ -1,0 +1,429 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Vibrae CLI — manage install, env, and processes via shell
+# Usage: vibrae [command] [args]
+
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+VERSION="0.4.0"
+
+trap 'err "unexpected error (line ${LINENO})"' ERR
+
+# Resolve script directory robustly even when invoked via symlink (e.g., /usr/local/bin/vibrae)
+resolve_self(){
+  local src="${BASH_SOURCE[0]}"
+  while [ -h "$src" ]; do
+    local dir; dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  printf '%s' "$src"
+}
+SCRIPT_PATH="$(resolve_self)"
+ROOT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+ENV_FILE="$ROOT_DIR/.env"
+ENV_EXAMPLE="$ROOT_DIR/.env.example"
+LOG_DIR="$ROOT_DIR/logs"
+
+# colors (respect NO_COLOR and non-TTY)
+if [ -z "${NO_COLOR:-}" ] && [ -t 1 ] && command -v tput >/dev/null 2>&1 && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
+  BOLD="$(tput bold)"; RESET="$(tput sgr0)"
+  RED="$(tput setaf 1)"; GREEN="$(tput setaf 2)"; YELLOW="$(tput setaf 3)"; BLUE="$(tput setaf 4)"; GREY="$(tput setaf 8)"
+else BOLD=""; RESET=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; GREY=""; fi
+ok(){ printf "%b✔%b %s\n" "$GREEN" "$RESET" "$*"; }
+warn(){ printf "%b!%b %s\n" "$YELLOW" "$RESET" "$*"; }
+err(){ printf "%bx%b %s\n" "$RED" "$RESET" "$*" 1>&2; }
+hdr(){ printf "%b%s%b\n" "$BOLD" "$*" "$RESET"; }
+
+banner(){
+  printf "=== %bVibrae%b — sound, simplified ===\n" "$BOLD" "$RESET"
+}
+
+license_notice(){
+  printf "%bVibrae%b (C) 2025 Daniel Callero\n" "$BOLD" "$RESET"
+  printf "This is free software released under the GNU GPLv3; you may redistribute it under certain conditions.\n"
+  printf "There is NO WARRANTY, to the extent permitted by law. See LICENSE for details.\n\n"
+}
+
+contact_information(){
+  printf "%bVibrae%b (C) 2025 Daniel Callero\n\n" "$BOLD" "$RESET"
+  printf "Vibrae is a free and open-source project distributed under the GNU GPLv3 license. Thus, there is no warranty of any kind.\n"
+  printf "Should you encounter any issue, feel free to raise an issue in the progect's GitHub page. Run ./vibrae github to open the repository.\n"
+  printf "Feel free to contact me through this %be-mail%b: %bvibrae@danicallero.es%b\n" "$BOLD" "$RESET" "$BOLD" "$RESET"
+
+}
+
+usage(){
+  banner
+  cat <<EOF
+
+${BOLD}Commands${RESET}
+  ${BOLD}version${RESET}              Show CLI version
+  ${BOLD}install${RESET}              Install/update dependencies (setup.sh)
+  ${BOLD}start${RESET} | up          Start the app (run.sh)
+  ${BOLD}stop${RESET} | down         Stop the app (stop.sh)
+  ${BOLD}restart${RESET}             Stop then start
+  ${BOLD}status${RESET}              Show service status (pretty)
+  ${BOLD}logs${RESET} [name] [n]     Tail logs (backend|player|serve|cloudflared). Default all, n=100
+  ${BOLD}front restart${RESET}        Restart only the frontend static server (npx)
+  ${BOLD}open${RESET}                Open web UI in browser
+  ${BOLD}url${RESET}                 Print local/public URLs
+
+  ${BOLD}env show${RESET}            Print .env
+  ${BOLD}env edit${RESET}            Open .env in editor (EDITOR/VISUAL/TextEdit/nano)
+  ${BOLD}env set${RESET} KEY=VALUE   Set or add a key
+  ${BOLD}env sync${RESET}            Add missing recommended keys with defaults
+
+  ${BOLD}autostart${RESET} on|off    Toggle AUTOSTART in .env
+  ${BOLD}source detect${RESET}       Show resolved source (folder:/path or usb:LABEL)
+
+  ${BOLD}check-env${RESET}           Validate env; highlight missing/weak values
+  ${BOLD}doctor${RESET}              Check required tools
+  ${BOLD}help${RESET}                Show this help (also available inside the shell)
+  ${BOLD}shell${RESET}               Start interactive shell (default when no args)
+  ${BOLD}clear${RESET}               Clear the screen
+  
+    ${BOLD}pi install${RESET}          Raspberry Pi: setup systemd, nginx
+    ${BOLD}pi start|stop|status${RESET} Manage services on Pi
+    ${BOLD}pi logs${RESET} [unit]      Tail journal logs (e.g., vibrae-backend)
+EOF
+}
+
+ensure_env(){ [ -f "$ENV_FILE" ] || { echo "# Vibrae environment" > "$ENV_FILE"; }; }
+
+run_script(){
+  local script="$1"
+  if [ ! -x "$ROOT_DIR/$script" ] && [ -f "$ROOT_DIR/$script" ]; then chmod +x "$ROOT_DIR/$script" || true; fi
+  if [ ! -f "$ROOT_DIR/$script" ]; then err "script not found: $script"; return 1; fi
+  (cd "$ROOT_DIR" && ./"$script")
+}
+
+kv_set(){
+  local key="$1"; local val="$2"
+  ensure_env
+  local tmp
+  tmp="$(mktemp 2>/dev/null || true)"
+  if [ -z "$tmp" ]; then tmp="${ENV_FILE}.tmp.$$"; fi
+  awk -v K="$key" -v V="$val" '
+    BEGIN{ set=0 }
+    /^[#[:space:]]/ { print; next }
+    $0 ~ "^"K"=" { if(!set){ print K"="V; set=1 } ; next }
+    { print }
+    END{ if(!set) print K"="V }
+  ' "$ENV_FILE" > "$tmp" && mv "$tmp" "$ENV_FILE"
+}
+kv_get(){ local key="$1"; [ -f "$ENV_FILE" ] || return 1; grep -E "^${key}=" "$ENV_FILE" | head -n1 | sed -E "s/^${key}=//"; }
+
+# helpers
+truthy(){ case "$(echo "$1" | tr '[:upper:]' '[:lower:]')" in true|1|yes|on) return 0;; *) return 1;; esac }
+is_uvicorn_running(){ pgrep -f "uvicorn" >/dev/null 2>&1; }
+
+autostart_maybe_start(){
+  ensure_env
+  local as; as="$(kv_get AUTOSTART)"
+  if truthy "$as"; then
+    if is_uvicorn_running; then
+      ok "AUTOSTART on; already running"
+    else
+      if [ ! -f "$ROOT_DIR/.installed" ] || [ ! -d "$ROOT_DIR/venv" ]; then
+        warn "AUTOSTART on but setup not completed; run ./setup.sh first"
+      else
+        warn "AUTOSTART on; starting services"
+        cmd_start
+      fi
+    fi
+    return 0
+  fi
+  return 1
+}
+
+cmd_install(){ run_script setup.sh; }
+cmd_start(){
+  # Require install stamp and venv
+  if [ ! -f "$ROOT_DIR/.installed" ]; then err "setup has not been run. Run: ./setup.sh or 'vibrae install'"; return 1; fi
+  if [ ! -d "$ROOT_DIR/venv" ]; then err "missing venv. Run: ./setup.sh"; return 1; fi
+  run_script run.sh;
+}
+cmd_stop(){ run_script stop.sh; }
+cmd_restart(){
+  if [ ! -f "$ROOT_DIR/.installed" ]; then err "setup has not been run. Run: ./setup.sh or 'vibrae install'"; return 1; fi
+  if [ ! -d "$ROOT_DIR/venv" ]; then err "missing venv. Run: ./setup.sh"; return 1; fi
+  license_notice; cmd_stop || true; cmd_start;
+}
+
+service_row(){
+  local name="$1"; local patt="$2"; local psout="$3"
+  if echo "$psout" | grep -E "$patt" | grep -v grep >/dev/null; then
+    printf "  %b●%b %-12s %brunning%b\n" "$GREEN" "$RESET" "$name" "$GREEN" "$RESET"
+  else
+    printf "  %b○%b %-12s %bstopped%b\n" "$GREY" "$RESET" "$name" "$GREY" "$RESET"
+  fi
+}
+cmd_status(){
+  banner
+  local psout; psout="$(/bin/ps aux || ps -ef || true)"
+  hdr "Services"; service_row "uvicorn" "uvicorn" "$psout"; service_row "static-serve" "(serve -s|npx serve)" "$psout"; service_row "cloudflared" "cloudflared" "$psout"
+  # Frontend mode detection
+  local mode="backend"
+  if echo "$psout" | grep -E "(serve -s|npx serve)" >/dev/null; then mode="npx"; fi
+  printf "\nFrontend: %s\n" "$mode"
+  # API proxy check (nginx route)
+  local api_url="http://127.0.0.1/api/health"
+  local code
+  code=$(curl -s -o /dev/null -w "%{http_code}" "$api_url" || echo "000")
+  printf "API (/api): HTTP %s\n" "$code"
+}
+
+cmd_logs(){
+  mkdir -p "$LOG_DIR" 2>/dev/null || true
+  local name="$1"; shift || true
+  local lines="${1:-100}"
+  if [ -z "$name" ]; then
+    for f in backend player serve cloudflared; do
+      hdr "$f.log"; tail -n "$lines" "$LOG_DIR/$f.log" 2>/dev/null || warn "no $f.log"; echo
+    done
+  else
+    hdr "$name.log"; tail -n "$lines" "$LOG_DIR/$name.log" 2>/dev/null || err "no such log: $name"
+  fi
+}
+
+cmd_front_restart(){
+  # Restart only the npx static server
+  banner
+  hdr "Frontend restart"
+  pkill -f "(serve -s|npx serve)" >/dev/null 2>&1 || true
+  sleep 0.5
+  # Re-run the portion from run.sh that starts npx if possible
+  FRONTEND_DIST_VAL="$(kv_get FRONTEND_DIST)"; [ -n "$FRONTEND_DIST_VAL" ] || FRONTEND_DIST_VAL="/front/dist"
+  SERVE_ROOT="$ROOT_DIR$FRONTEND_DIST_VAL"
+  PORT_VAL="$(kv_get FRONTEND_PORT)"; [ -n "$PORT_VAL" ] || PORT_VAL=9081
+  if command -v npx >/dev/null 2>&1 && [ -d "$SERVE_ROOT" ]; then
+    mkdir -p "$LOG_DIR" 2>/dev/null || true
+    echo "----- $(date) front restart on :$PORT_VAL -----" >> "$LOG_DIR/serve.log"
+    (cd "$ROOT_DIR" && FRONTEND_MODE=npx nohup npx serve -s "$SERVE_ROOT" -l "$PORT_VAL" >> "$LOG_DIR/serve.log" 2>&1 &)
+    ok "frontend restarted on :$PORT_VAL (mode=npx)"
+  else
+    warn "npx or export missing; backend will serve static files if available"
+  fi
+}
+
+cmd_github(){
+  local url="https://github.com/danicallero/Vibrae"
+  if [[ "$(uname)" == "Darwin" ]]; then open "$url"; echo "Repo: $url"; else xdg-open "$url" 2>/dev/null; echo "Repo: $url" || echo "$url"; fi
+}
+
+cmd_open(){
+  local domain; domain="$(kv_get DOMAIN)"
+  local port; port="$(kv_get FRONTEND_PORT)"; [ -n "$port" ] || port=9081
+  local url
+  if [ -n "$domain" ]; then url="https://$domain"; else url="http://127.0.0.1:80"; fi
+  if [[ "$(uname)" == "Darwin" ]]; then open "$url"; else xdg-open "$url" 2>/dev/null || echo "$url"; fi
+}
+cmd_url(){
+  local port; port="$(kv_get FRONTEND_PORT)"; [ -n "$port" ] || port=9081
+  echo "Local (nginx):  http://127.0.0.1"
+  echo "Local (static): http://127.0.0.1:$port"
+  local domain; domain="$(kv_get DOMAIN)"; [ -n "$domain" ] && echo "Public: https://$domain"
+}
+
+cmd_env_show(){ ensure_env; cat "$ENV_FILE"; }
+cmd_env_edit(){ ensure_env; if [[ "$(uname)" == "Darwin" ]] && [ -z "${EDITOR}${VISUAL}" ]; then open -e "$ENV_FILE"; else ${EDITOR:-${VISUAL:-nano}} "$ENV_FILE"; fi }
+cmd_env_set(){
+  local kv="$1"; if ! echo "$kv" | grep -q '='; then err "usage: vibrae env set KEY=VALUE"; return 1; fi
+  local key="${kv%%=*}"; local val="${kv#*=}"; kv_set "$key" "$val"; ok "$key set"
+}
+
+cmd_env_sync(){
+  ensure_env
+  local defaults
+  defaults=$(cat <<'DEFEOF'
+AUTOSTART=false
+MUSIC_MODE=folder
+MUSIC_DIR=music
+USB_SUBDIR=
+VIBRAE_MUSIC=
+WEB_DIST=front/dist
+FRONTEND_DIST=/front/dist
+FRONTEND_PORT=9081
+BACKEND_PORT=8000
+BACKEND_MODULE=backend.main:app
+SECRET_KEY=change-me-please
+LOG_LEVEL=INFO
+LOG_KEEP=5
+LOG_ROTATE_INTERVAL_HOURS=12
+DOMAIN=
+NGINX_CONF=nginx.conf
+TUNNEL=cloudflared
+CLOUDFLARE_TUNNEL_TOKEN=
+DEFEOF
+)
+  local added=0
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    local key="${line%%=*}"; local val="${line#*=}"
+    if ! grep -qE "^${key}=" "$ENV_FILE" 2>/dev/null; then
+      echo "${key}=${val}" >> "$ENV_FILE"; added=$((added+1))
+    fi
+  done <<< "$defaults"
+  [ $added -gt 0 ] && ok "Added $added missing keys" || ok ".env already has recommended keys"
+}
+
+cmd_autostart(){ case "$1" in on) kv_set AUTOSTART true; ok "AUTOSTART=true";; off) kv_set AUTOSTART false; ok "AUTOSTART=false";; *) err "usage: vibrae autostart on|off"; return 1;; esac }
+
+cmd_source_detect(){
+  ensure_env
+  local mode dir label
+  mode="$(kv_get MUSIC_SOURCE_MODE)"; [ -n "$mode" ] || mode="$(kv_get MUSIC_MODE)"; [ -n "$mode" ] || mode="folder"
+  dir="$(kv_get MUSIC_DIR)"; [ -n "$dir" ] || dir="music"
+  label="$(kv_get VIBRAE_MUSIC)"; [ -n "$label" ] || label="$(kv_get USB_VOLUME_LABEL)"
+  if [ -z "$label" ] && [ "$mode" = "usb" ]; then
+    warn "VIBRAE_MUSIC not set (USB volume label). USB_VOLUME_LABEL is deprecated; set VIBRAE_MUSIC instead."
+  fi
+  if [ "$mode" = "usb" ]; then [ -n "$label" ] && echo "usb:$label" || echo "usb:(no label)"; else echo "folder:$dir"; fi
+}
+
+cmd_check_env(){
+  banner
+  ensure_env
+  local issues=0
+  check(){ local k="$1"; local msg="$2"; local v; v="$(kv_get "$k")"; if [ -z "$v" ]; then issues=$((issues+1)); printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "$k" "$msg"; fi }
+  check SECRET_KEY "JWT signing secret is required"
+  check BACKEND_PORT "defaults to 8000 if unset"
+  check FRONTEND_PORT "defaults to 9081 if unset"
+  check FRONTEND_DIST "path to exported web (default /front/dist)"
+  # Music/source
+  local mode; mode="$(kv_get MUSIC_MODE)"; [ -z "$mode" ] && mode="$(kv_get MUSIC_SOURCE_MODE)"
+  if [ -z "$mode" ]; then printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "MUSIC_MODE" "folder|usb (default folder)"; issues=$((issues+1)); fi
+  if [ "$mode" = "usb" ]; then
+    local label; label="$(kv_get USB_VOLUME_LABEL)"; [ -z "$label" ] && label="$(kv_get VIBRAE_MUSIC)"
+    [ -z "$label" ] && printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "VIBRAE_MUSIC" "USB volume label or absolute mount path"
+  fi
+  # Tunneling
+  local tunnel; tunnel="$(kv_get TUNNEL)"; [ -z "$tunnel" ] && tunnel="cloudflared"
+  if [ "$tunnel" = "cloudflared" ]; then
+    local tok; tok="$(kv_get CLOUDFLARE_TUNNEL_TOKEN)"; [ -z "$tok" ] && printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "CLOUDFLARE_TUNNEL_TOKEN" "required when TUNNEL=cloudflared"
+  fi
+  [ $issues -eq 0 ] && ok "env looks good" || warn "$issues item(s) to review"
+}
+
+cmd_doctor(){
+  banner
+  hdr "Tools"
+  command -v python3 >/dev/null && ok "python3" || err "python3 MISSING"
+  command -v pip >/dev/null && ok "pip" || err "pip MISSING"
+  command -v node >/dev/null && ok "node" || warn "node not found (frontend optional)"
+  command -v npm >/dev/null && ok "npm" || warn "npm not found (frontend optional)"
+  command -v nginx >/dev/null && ok "nginx" || warn "nginx not found (reverse proxy optional)"
+  command -v cloudflared >/dev/null && ok "cloudflared" || warn "cloudflared not found (public URL optional)"
+  if [[ "$(uname)" == "Darwin" ]]; then
+    command -v brew >/dev/null && ok "brew" || warn "brew not found (auto-install skipped)"
+  fi
+  hdr "Python"
+  if [ -d "$ROOT_DIR/venv" ]; then
+  "$ROOT_DIR/venv/bin/python" - <<'PY'
+import sys
+mods=["fastapi","uvicorn","sqlalchemy","pydantic","jose","python_dotenv","websockets","vlc"]
+missing=[]
+for m in mods:
+  try:
+    __import__(m)
+  except Exception:
+    missing.append(m)
+if missing:
+  print("[warn] missing modules:", ", ".join(missing))
+else:
+  print("[ok] Python deps present")
+try:
+  import vlc
+  try:
+    _=vlc.Instance()
+    print("[ok] libVLC available")
+  except Exception:
+    print("[warn] libVLC not available; install VLC media player")
+except Exception:
+  pass
+PY
+  else
+  warn "venv not found; run ./setup.sh"
+  fi
+}
+
+# --- Raspberry Pi helpers ---
+is_pi(){ [ -f /etc/raspberrypi-release ] || grep -qi 'raspberry' /proc/cpuinfo 2>/dev/null || grep -qi 'raspi' /proc/cpuinfo 2>/dev/null; }
+cmd_pi_install(){ license_notice; if ! is_pi; then warn "Not a Raspberry Pi (continuing anyway)"; fi; sudo bash "$ROOT_DIR/raspi/setup.sh"; }
+cmd_pi_start(){
+  license_notice
+  if [ ! -f "$ROOT_DIR/.installed" ]; then warn "setup has not been run locally; proceeding with Pi systemd start"; fi
+  sudo bash "$ROOT_DIR/raspi/run.sh"
+}
+cmd_pi_stop(){ license_notice; sudo bash "$ROOT_DIR/raspi/stop.sh"; }
+cmd_pi_status(){ banner; systemctl --no-pager status vibrae-backend vibrae-frontend vibrae-cloudflared || true; }
+cmd_pi_logs(){ local unit="${1:-vibrae-backend}"; journalctl -u "$unit" -f; }
+
+# Enable extended glob for trimming
+shopt -s extglob 2>/dev/null || true
+
+run_interactive(){
+  banner
+  # attempt autostart if enabled
+  autostart_maybe_start || true
+  printf "Type 'help' for commands, 'quit' to exit.\n"
+  while true; do
+    if read -e -r -p "vibrae> " line; then
+      # trim
+      line="${line##+([[:space:]])}"
+      line="${line%%+([[:space:]])}"
+      case "$line" in
+        "" ) continue ;;
+        quit|exit ) break ;;
+        help ) usage; echo; continue ;;
+  clear ) clear 2>/dev/null || printf '\033c'; echo; continue ;;
+      esac
+      IFS=' ' read -r -a args <<< "$line"
+  set +e
+      dispatch "${args[@]}"
+      rc=$?
+      set -e
+      echo
+    else
+      break
+    fi
+  done
+}
+
+dispatch(){
+  case "$1" in
+  --version|version) shift; echo "vibrae ${VERSION}"; return 0;;
+    install) shift; cmd_install "$@";;
+    start|up) shift; cmd_start "$@";;
+    stop|down) shift; cmd_stop "$@";;
+    restart) shift; cmd_restart "$@";;
+    status) shift; cmd_status "$@";;
+    logs) shift; cmd_logs "$@";;
+  front) shift; case "$1" in restart) shift; cmd_front_restart ;; *) usage; return 1;; esac ;;
+    open) shift; cmd_open "$@";;
+    url) shift; cmd_url "$@";;
+
+    contact) shift; contact_information "$@";;
+    github) shift; cmd_github "$@";;
+
+    env) shift; case "$1" in show) shift; cmd_env_show;; edit) shift; cmd_env_edit;; set) shift; cmd_env_set "$@";; sync) shift; cmd_env_sync;; *) usage; return 1;; esac;;
+
+    autostart) shift; cmd_autostart "$@";;
+    source) shift; case "$1" in detect) shift; cmd_source_detect;; *) usage; return 1;; esac;;
+
+    check-env) shift; cmd_check_env;;
+  check) shift; cmd_check_env;;
+    doctor) shift; cmd_doctor;;
+  clear) clear 2>/dev/null || printf '\033c';;
+  pi) shift; case "$1" in install) shift; cmd_pi_install;; start) shift; cmd_pi_start;; stop) shift; cmd_pi_stop;; status) shift; cmd_pi_status;; logs) shift; cmd_pi_logs "$@";; *) usage; return 1;; esac;;
+    help|--help|-h) usage;;
+    shell|"") run_interactive;;
+    *) err "Unknown command: $1"; usage; return 1;;
+  esac
+}
+
+main(){ dispatch "$@"; }
+
+main "$@"

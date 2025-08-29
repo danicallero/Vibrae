@@ -20,6 +20,7 @@
 5. [Deployment & Configuration](#deployment--configuration)
 6. [Environment Variables](#environment-variables)
 7. [Logs & Monitoring](#logs--monitoring)
+8. [CLI Usage](#cli-usage)
 9. [Screenshots](#screenshots)
 10. [License](#license)
 
@@ -121,11 +122,25 @@ Important: Web export
 
 ### 5. Start all services
 
+You can use either the CLI or the scripts directly.
+
+CLI:
+
 ```bash
-./run.sh
+vibrae start   # start stack (prints license notice)
+vibrae status  # show running services
+vibrae stop    # stop stack (prints license notice)
+vibrae restart # stop + start
 ```
 
-Starts frontend static server, backend API, nginx reverse proxy, and Cloudflare Tunnel.
+Scripts:
+
+```bash
+./run.sh
+./stop.sh
+```
+
+Both start backend API, nginx reverse proxy, and Cloudflare Tunnel. The frontend is always served at `/` by the backend if the static export exists (no need for npx serve).
 
 ### 6. Access the app
 
@@ -134,8 +149,10 @@ Visit your public Cloudflare Tunnel URL (e.g. `https://garden.example.com`) from
 ### 7. Stop all services
 
 ```bash
-./stop.sh
+vibrae stop
 ```
+
+Alternatively, you can run `./stop.sh`.
 
 ---
 
@@ -186,6 +203,24 @@ Tips:
 
 ---
 
+## Health Checks
+
+Check service health at:
+
+```
+GET /health
+```
+
+Returns JSON:
+
+```
+{
+	"backend": "ok",
+	"frontend": "ok" | "missing",
+	"player": "ok" | "idle"
+}
+```
+
 ## Logs & Monitoring
 
 - Log files live under `logs/` with rotations stored in `logs/history/`.
@@ -198,7 +233,31 @@ Tips:
 	- Navigate history (“Latest” + timestamps).
 
 
----
+
+## CLI Usage
+
+The Vibrae CLI provides a friendly, interactive shell and one-off commands.
+
+- Launch shell (autostarts services if `AUTOSTART=true` in `.env`):
+	- `vibrae`
+	- Inside shell: `help`, `status`, `logs`, `open`, `url`, `env show|edit|set KEY=VALUE`, `env sync`, `autostart on|off`, `clear`, `quit`
+
+- One-off commands:
+	- `vibrae start | stop | restart | status | logs [name] [n] | open | url | check-env | doctor`
+	- `vibrae env show | env edit | env set KEY=VALUE | env sync`
+	- `vibrae source detect`
+	- `vibrae clear`
+
+- Raspberry Pi helpers:
+	- `vibrae pi install`   # setup systemd, nginx (on Pi)
+	- `vibrae pi start`     # start services (systemd)
+	- `vibrae pi stop`      # stop services
+	- `vibrae pi status`    # systemd status
+	- `vibrae pi logs [unit]`
+
+Notes
+- When installed via `setup.sh` or `run.sh`, a `vibrae` shortcut is added to your PATH.
+- The shell supports `clear`, `help`, and command aliases (`check` = `check-env`).
 
 ## Screenshots
 

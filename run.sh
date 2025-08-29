@@ -1,6 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -e
+# Disable job control notifications to avoid 'Terminated: 15' messages from background jobs
+set +m 2>/dev/null || true
 
 # Base dir for relative paths
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -21,6 +23,26 @@ err(){ printf "%s[err ]%s %s\n" "$RED" "$RESET" "$*" 1>&2; }
 printf "%sVibrae%s (C) 2025 danicallero\n" "$BOLD" "$RESET"
 printf "This is free software released under the GNU GPLv3; you may redistribute it under certain conditions.\n"
 printf "There is NO WARRANTY, to the extent permitted by law. See LICENSE for details.\n\n"
+
+# Ensure 'vibrae' command is available on PATH
+if ! command -v vibrae >/dev/null 2>&1; then
+  CLI_SRC="$SCRIPT_DIR/vibrae"
+  if [ -f "$CLI_SRC" ]; then
+    chmod +x "$CLI_SRC" 2>/dev/null || true
+    DEST="/usr/local/bin/vibrae"
+    if ln -sf "$CLI_SRC" "$DEST" 2>/dev/null; then
+      info "installed vibrae at $DEST"
+    elif command -v sudo >/dev/null 2>&1 && sudo ln -sf "$CLI_SRC" "$DEST" 2>/dev/null; then
+      info "installed vibrae at $DEST"
+    else
+      mkdir -p "$HOME/.local/bin" 2>/dev/null || true
+      DEST_LOCAL="$HOME/.local/bin/vibrae"
+      if ln -sf "$CLI_SRC" "$DEST_LOCAL" 2>/dev/null; then
+        warn "installed vibrae at $DEST_LOCAL. Add 'export PATH=\$HOME/.local/bin:\$PATH' to your shell profile"
+      fi
+    fi
+  fi
+fi
 
 # log directories and rotation
 LOG_DIR="$SCRIPT_DIR/logs"
@@ -67,9 +89,17 @@ log_cmd() {
   done >> "$logfile" 2>&1 &
 }
 
-# Activate Python venv if exists
-if [ -d venv ]; then
-  source venv/bin/activate
+# Require prior installation and activate venv
+if [ ! -f "$SCRIPT_DIR/.installed" ]; then
+  err "setup has not been run. Please run ./setup.sh first."
+  exit 1
+fi
+if [ -d "$SCRIPT_DIR/venv" ]; then
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/venv/bin/activate"
+else
+  err "Python venv missing. Please run ./setup.sh to create it."
+  exit 1
 fi
 
 # Load .env (export all vars)
@@ -79,16 +109,32 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
   set +a
 fi
 
-# Start frontend (static server)
-info "frontend: port $FRONTEND_PORT"
+# Build/export web if missing (optional)
+FRONTEND_DIST="${FRONTEND_DIST:-/front/dist}"
+FRONTEND_PORT="${FRONTEND_PORT:-9081}"
+BACKEND_PORT="${BACKEND_PORT:-8000}"
+BACKEND_MODULE="${BACKEND_MODULE:-backend.main:app}"
+
 SERVE_ROOT="$SCRIPT_DIR$FRONTEND_DIST"
 if [ ! -d "$SERVE_ROOT" ]; then
-  err "missing frontend dir: $SERVE_ROOT"
-  exit 1
+  if command -v npm >/dev/null 2>&1; then
+    warn "missing frontend export at $SERVE_ROOT; exporting now"
+    (cd "$SCRIPT_DIR/front" && npx expo export --platform web) || warn "web export failed; frontend may be unavailable"
+  else
+    warn "Node/npm not available; skipping web export. Frontend may be unavailable."
+  fi
 fi
-rotate_log "$LOG_DIR/serve.log" "$LOG_KEEP" "$HISTORY_DIR"
-echo "----- $(date) start serve on :$FRONTEND_PORT -----" >> "$LOG_DIR/serve.log"
-log_cmd "$LOG_DIR/serve.log" npx serve -s "$SERVE_ROOT" -l "$FRONTEND_PORT"
+
+# Start frontend (static server)
+if command -v npx >/dev/null 2>&1 && [ -d "$SERVE_ROOT" ]; then
+  info "frontend: port $FRONTEND_PORT"
+  rotate_log "$LOG_DIR/serve.log" "$LOG_KEEP" "$HISTORY_DIR"
+  echo "----- $(date) start serve on :$FRONTEND_PORT -----" >> "$LOG_DIR/serve.log"
+  export FRONTEND_MODE=npx
+  log_cmd "$LOG_DIR/serve.log" npx serve -s "$SERVE_ROOT" -l "$FRONTEND_PORT"
+else
+  warn "frontend static server not started (missing npx or export). API will still run."
+fi
 
 # Start backend API
 info "backend: port $BACKEND_PORT"
@@ -108,36 +154,63 @@ ls -1t "$LOG_DIR"/uvicorn_logging.*.ini 2>/dev/null | sed -e '1,1d' | xargs -I {
 # Remove any obsolete static config if present
 [ -f "$LOG_DIR/uvicorn_logging.ini" ] && rm -f "$LOG_DIR/uvicorn_logging.ini"
 
-# Uvicorn writes to logs via logging.ini handlers (with timestamps); silence stdout
-nohup uvicorn "$BACKEND_MODULE" --host 0.0.0.0 --port "$BACKEND_PORT" --log-config "$LOG_CFG_RENDERED" >/dev/null 2>&1 &
+# Run uvicorn from the repo root so module imports work regardless of folder name,
+# and capture stdout/stderr into backend.log so early import errors aren't lost.
+(cd "$SCRIPT_DIR" && nohup env PYTHONPATH="$SCRIPT_DIR" \
+  uvicorn "$BACKEND_MODULE" --host 0.0.0.0 --port "$BACKEND_PORT" --log-config "$LOG_CFG_RENDERED" \
+  >> "$LOG_DIR/backend.log" 2>&1 &) 
+
+# Detach all background jobs from this shell so parent shells won't print termination notices
+jobs >/dev/null 2>&1 || true
+disown -a 2>/dev/null || true
 
 # Detect OS and start nginx appropriately, rendering config from template with env vars
 OS_TYPE=$(uname)
 if [[ "$OS_TYPE" == "Darwin" ]]; then
   info "nginx (macOS): start"
+  if ! command -v nginx >/dev/null 2>&1; then
+    warn "nginx not installed; skipping reverse proxy on macOS."
+  else
   # Render nginx config with env vars into a temp file
   if command -v envsubst >/dev/null 2>&1; then
     # macOS mktemp requires -t with a prefix; it outputs a unique file path
     RENDERED_NGINX_CONF=$(mktemp -t nginx.vibrae)
     # Only substitute our own variables to avoid touching nginx runtime vars like $host
     envsubst '${DOMAIN} ${BACKEND_PORT} ${FRONTEND_PORT}' < "$NGINX_CONF" > "$RENDERED_NGINX_CONF"
-    sudo nginx -c "$RENDERED_NGINX_CONF"
+    # If nginx is already running, stop it to avoid bind errors and ensure new config path is applied
+    if pgrep -x nginx >/dev/null 2>&1; then
+      warn "nginx already running; stopping for clean restart"
+      sudo nginx -s stop >/dev/null 2>&1 || true
+      sleep 1
+    fi
+  sudo nginx -c "$RENDERED_NGINX_CONF"
   else
     warn "envsubst not found. Using nginx.conf as-is."
+    if pgrep -x nginx >/dev/null 2>&1; then
+      warn "nginx already running; stopping for clean restart"
+      sudo nginx -s stop >/dev/null 2>&1 || true
+      sleep 1
+    fi
     sudo nginx -c "$NGINX_CONF"
+  fi
   fi
 else
   info "nginx (Linux): start"
-  sudo systemctl start nginx
+  # Restart to pick up config changes and avoid bind errors
+  if command -v systemctl >/dev/null 2>&1; then
+    sudo systemctl restart nginx || warn "could not restart nginx"
+  else
+    warn "systemctl not available; skipping nginx restart"
+  fi
 fi
 
 # Start Cloudflare Tunnel (retry on failure)
 CF_TUNNEL_TOKEN="${CLOUDFLARE_TUNNEL_TOKEN:-}"
-if [ -z "$CF_TUNNEL_TOKEN" ]; then
-  err "missing CLOUDFLARE_TUNNEL_TOKEN in .env"
-  exit 1
+if [ -z "$CF_TUNNEL_TOKEN" ] || ! command -v cloudflared >/dev/null 2>&1; then
+  if [ -z "$CF_TUNNEL_TOKEN" ]; then warn "Cloudflared token missing; skipping tunnel"; fi
+  if ! command -v cloudflared >/dev/null 2>&1; then warn "cloudflared not installed; skipping tunnel"; fi
+  CF_TUNNEL_TOKEN=""
 fi
-# Don't leak token to child env (prevents it showing in logs)
 unset CLOUDFLARE_TUNNEL_TOKEN
 
 start_cloudflared_with_retry() {
@@ -185,7 +258,9 @@ start_cloudflared_with_retry() {
   return 1
 }
 
-start_cloudflared_with_retry || exit 1
+if [ -n "$CF_TUNNEL_TOKEN" ]; then
+  start_cloudflared_with_retry || warn "cloudflared failed to connect; app will still run locally"
+fi
 
 ## Start periodic rotation in background (nohup)
 (
@@ -205,5 +280,9 @@ start_cloudflared_with_retry || exit 1
   done
 ) >/dev/null 2>&1 &
 echo $! > "$LOG_DIR/log-rotate.pid"
+
+# Detach again in case new background jobs were spawned later
+jobs >/dev/null 2>&1 || true
+disown -a 2>/dev/null || true
 
 ok "done."

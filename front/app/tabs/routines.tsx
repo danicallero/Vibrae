@@ -52,6 +52,12 @@ const RoutinesScreen = () => {
     const [isEditing, setIsEditing] = useState<boolean>(false);
     const [editingId, setEditingId] = useState<number | null>(null);
     const [optionsRoutineId, setOptionsRoutineId] = useState<number | null>(null);
+    // Color mapping for routines (id -> color)
+    const [routineColors, setRoutineColors] = useState<Record<number,string>>({});
+    const colorPalette = [
+        '#4c6ef5','#228be6','#15aabf','#12b886','#82c91e','#fab005','#fd7e14','#fa5252','#e64980','#7950f2',
+        '#2f9e44','#5c940d','#e67700','#d9480f','#c92a2a','#a61e4d','#6741d9','#1864ab','#0b7285','#087f5b'
+    ];
 
     const [name, setName] = useState<string>("");
     const [startTime, setStartTime] = useState<string>("");
@@ -87,7 +93,7 @@ const RoutinesScreen = () => {
     const [viewMode, setViewMode] = useState<"list" | "week">("list");
     const [currentDate, setCurrentDate] = useState<Date>(new Date());
 
-    // --- Helpers for time and summaries ---
+    // Time helpers
     const timeRegex = /^([01]?\d|2[0-3]):[0-5]\d$/;
     const parseTimeToMins = (hhmm: string): number | null => {
         const m = hhmm.match(timeRegex);
@@ -113,7 +119,7 @@ const RoutinesScreen = () => {
     const yesterdayKey = ["sun","mon","tue","wed","thu","fri","sat"][((todayIndex + 6) % 7)];
 
     const isActiveNow = (r: Routine): boolean => {
-        // Respect months as well as weekdays; treat blank months/weekdays as wildcard (always true)
+    // Months + weekdays (empty means all)
         const s = parseTimeToMins(r.start_time);
         const e = parseTimeToMins(r.end_time);
         if (s == null || e == null) return false;
@@ -136,12 +142,9 @@ const RoutinesScreen = () => {
         const hasYesterdayMonth = !monthList.length || monthList.includes(yesterdayMonthKey);
 
         if (e > s) {
-            // Simple same-day window must match today weekday + month
             return hasToday && hasThisMonth && nowMins >= s && nowMins < e;
         }
-        // Overnight window (wraps past midnight). Active if:
-        //  - After start: today weekday+month and >= start
-        //  - Before end: yesterday weekday+month and < end
+    // Overnight span
         const afterStart = hasToday && hasThisMonth && nowMins >= s;
         const beforeEnd = hasYesterday && hasYesterdayMonth && nowMins < e;
         return afterStart || beforeEnd;
@@ -209,7 +212,7 @@ const RoutinesScreen = () => {
 
     const splitSummary = (s: string) => s.split(" · ").map((x) => x.trim()).filter(Boolean);
 
-    // --- Calendar helpers ---
+    // Calendar helpers
     const dayKeyOf = (d: Date): string => ["sun","mon","tue","wed","thu","fri","sat"][d.getDay()];
     const monthKeyOf = (d: Date): string => ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"][d.getMonth()];
     const includesWeekday = (r: Routine, d: Date) => {
@@ -220,8 +223,6 @@ const RoutinesScreen = () => {
         if (!r.months || r.months.trim() === "") return true;
         return r.months.toLowerCase().split(",").map(s => s.trim()).includes(monthKeyOf(d));
     };
-    const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1);
-    const endOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth() + 1, 0);
     const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
     const startOfWeekMon = (d: Date) => {
         const day = d.getDay(); // 0=Sun..6=Sat
@@ -270,15 +271,14 @@ const RoutinesScreen = () => {
     const hours = Array.from({ length: 25 }, (_, i) => i); // 0..24
     const windowHeight = Dimensions.get('window').height;
     const windowWidth = Dimensions.get('window').width;
-    // viewport height for the timetable (ensures vertical scroll)
-    // Improve sizing on large / desktop screens: allow taller timetable but cap for usability
+    // Timetable height (responsive)
     const TIMETABLE_HEIGHT = (() => {
         const base = Math.min(HOUR_HEIGHT * 24, windowHeight - 260);
         if (Platform.OS === 'web' && windowHeight > 900) return Math.min(HOUR_HEIGHT * 24, windowHeight - 320);
         return Math.max(320, base);
     })();
     const gridScrollRef = useRef<ScrollView | null>(null);
-    // Horizontal sync between day header and grid
+    // Horizontal sync
     const headerHScrollRef = useRef<ScrollView | null>(null);
     const gridHScrollRef = useRef<ScrollView | null>(null);
     const hSyncingRef = useRef<null | 'header' | 'grid'>(null);
@@ -296,7 +296,7 @@ const RoutinesScreen = () => {
         if (headerHScrollRef.current) headerHScrollRef.current.scrollTo({ x, animated: false });
         requestAnimationFrame(() => { hSyncingRef.current = null; });
     };
-    // Horizontal readability controls
+    // Day width calc
     const [weekWide, setWeekWide] = useState(true);
     const GAP = 6; // px gap between day columns
     const FIT_DAY_WIDTH = Math.max(86, Math.floor((windowWidth - 42 - GAP * 6 - 12) / 7));
@@ -315,7 +315,7 @@ const RoutinesScreen = () => {
 
     useEffect(() => {
         if (viewMode === 'week' && isCurrentMonth) {
-            // slight delay to allow layout
+            // delay for layout
             const t = setTimeout(scrollToNow, 50);
             return () => clearTimeout(t);
         }
@@ -325,7 +325,7 @@ const RoutinesScreen = () => {
     useEffect(() => {
         if (!(viewMode === 'week' && isCurrentMonth)) return;
         const tick = () => setNow(new Date());
-        // align roughly to next minute
+    // next minute alignment
         const msToNextMinute = 60000 - (Date.now() % 60000);
         const lead = setTimeout(() => {
             tick();
@@ -346,8 +346,10 @@ const RoutinesScreen = () => {
                 apiFetch(`/scenes/`)
             ]);
             if (!routineRes.ok || !scenesRes.ok) throw new Error("API error");
-            setRoutines(await routineRes.json());
+            const routineData: Routine[] = await routineRes.json();
+            setRoutines(routineData);
             setScenes(await scenesRes.json());
+            setRoutineColors(prev => assignRoutineColors(prev, routineData));
         } catch (error) {
             console.error(error);
             Alert.alert("Error", "No se pudieron cargar las rutinas o escenas.");
@@ -538,6 +540,8 @@ const RoutinesScreen = () => {
                             <View style={styles.balanceCard}>
                                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: 'center' }}>
                                     <View>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                            <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: routineColors[item.id] || COLORS.primary, borderWidth: 1, borderColor: '#ffffff55' }} />
                                         {sceneName != null ? (
                                             <Text style={{ fontSize: 15, fontWeight: "600", color: COLORS.text }}>{sceneName}</Text>
                                         ) : (
@@ -545,6 +549,7 @@ const RoutinesScreen = () => {
                                                 <Ionicons name="warning-outline" size={20} color="#e78f3cff" /> <Text style={{ fontSize: 15, color: COLORS.warning, fontWeight: "600" }}> ¡Sin escena!</Text>
                                             </View>
                                         )}
+                                        </View>
                                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                                             <Text style={{ fontSize: 12, color: COLORS.textLight }}>
                                                 {item.start_time} - {item.end_time}
@@ -697,13 +702,13 @@ const RoutinesScreen = () => {
                                                                     right: 4,
                                                                     top: ev.start / 60 * HOUR_HEIGHT,
                                                                     height: Math.max(6, (ev.end - ev.start) / 60 * HOUR_HEIGHT - 2),
-                                                                    backgroundColor: isActive ? '#e6f7ef' : '#e8f0ff',
-                                                                    borderColor: isActive ? '#17a673' : COLORS.primary,
+                                                                    backgroundColor: isActive ? '#e6f7ef' : (routineColors[ev.routine.id] || '#e8f0ff') + '22',
+                                                                    borderColor: isActive ? '#17a673' : (routineColors[ev.routine.id] || COLORS.primary),
                                                                     borderWidth: 1,
                                                                     borderRadius: 6,
                                                                     padding: 4,
                                                                 }}
-                                                                onPress={() => startEdit(ev.routine)}
+                                                                onPress={() => setOptionsRoutineId(ev.routine.id)}
                                                             >
                                                                 <Text numberOfLines={1} style={{ fontSize: 11, fontWeight: '600', color: COLORS.text }}>
                                                                     {ev.sceneName || `Escena ${ev.routine.scene_id}`}
@@ -747,13 +752,13 @@ const RoutinesScreen = () => {
                                                                 right: 4,
                                                                 top: ev.start / 60 * HOUR_HEIGHT,
                                                                 height: Math.max(6, (ev.end - ev.start) / 60 * HOUR_HEIGHT - 2),
-                                                                backgroundColor: isActive ? '#e6f7ef' : '#e8f0ff',
-                                                                borderColor: isActive ? '#17a673' : COLORS.primary,
+                                                                backgroundColor: isActive ? '#e6f7ef' : (routineColors[ev.routine.id] || '#e8f0ff') + '22',
+                                                                borderColor: isActive ? '#17a673' : (routineColors[ev.routine.id] || COLORS.primary),
                                                                 borderWidth: 1,
                                                                 borderRadius: 6,
                                                                 padding: 4,
                                                             }}
-                                                            onPress={() => startEdit(ev.routine)}
+                                                            onPress={() => setOptionsRoutineId(ev.routine.id)}
                                                         >
                                                             <Text numberOfLines={1} style={{ fontSize: 11, fontWeight: '600', color: COLORS.text }}>
                                                                 {ev.sceneName || `Escena ${ev.routine.scene_id}`}
@@ -1018,3 +1023,28 @@ const RoutinesScreen = () => {
 };
 
 export default RoutinesScreen;
+
+// Color assignment helper kept outside component for clarity
+function assignRoutineColors(existing: Record<number,string>, routines: Routine[]) {
+    const colorPalette = [
+        '#4c6ef5','#228be6','#15aabf','#12b886','#82c91e','#fab005','#fd7e14','#fa5252','#e64980','#7950f2',
+        '#2f9e44','#5c940d','#e67700','#d9480f','#c92a2a','#a61e4d','#6741d9','#1864ab','#0b7285','#087f5b'
+    ];
+    const next = { ...existing };
+    const lum = (h:string)=>{const c=h.slice(1);const r=parseInt(c.slice(0,2),16)/255;const g=parseInt(c.slice(2,4),16)/255;const b=parseInt(c.slice(4,6),16)/255;const L=(v:number)=>v<=0.03928? v/12.92:Math.pow((v+0.055)/1.055,2.4);return 0.2126*L(r)+0.7152*L(g)+0.0722*L(b);};
+    const ratio=(a:string,b:string)=>{const A=lum(a),B=lum(b);const hi=Math.max(A,B)+0.05,lo=Math.min(A,B)+0.05;return hi/lo;};
+    const used = Object.values(next);
+    for (const r of routines) {
+        if (next[r.id]) continue;
+        const scored = colorPalette.map(col => {
+            if (!used.length) return { col, score: 100 + Math.random() };
+            const minC = Math.min(...used.map(u=>ratio(col,u)));
+            const diversity = used.length ? Math.min(...used.map(u=>{const ui=colorPalette.indexOf(u);const ci=colorPalette.indexOf(col);return ui===-1||ci===-1?0:Math.abs(ci-ui);})):colorPalette.length;
+            return { col, score: minC + diversity/10 + Math.random()*0.05 };
+        }).sort((a,b)=>b.score-a.score);
+        const pick = scored.slice(0,Math.min(5,scored.length));
+        const chosen = pick[Math.floor(Math.random()*pick.length)].col;
+        next[r.id]=chosen; used.push(chosen);
+    }
+    return next;
+}

@@ -113,19 +113,38 @@ const RoutinesScreen = () => {
     const yesterdayKey = ["sun","mon","tue","wed","thu","fri","sat"][((todayIndex + 6) % 7)];
 
     const isActiveNow = (r: Routine): boolean => {
+        // Respect months as well as weekdays; treat blank months/weekdays as wildcard (always true)
         const s = parseTimeToMins(r.start_time);
         const e = parseTimeToMins(r.end_time);
         if (s == null || e == null) return false;
         const now = new Date();
         const nowMins = now.getHours() * 60 + now.getMinutes();
+
         const wdStr = (r.weekdays || "").toLowerCase();
-        const hasToday = wdStr.includes(todayKey);
-        const hasYesterday = wdStr.includes(yesterdayKey);
+        const monStr = (r.months || "").toLowerCase();
+        const weekdayList = wdStr ? wdStr.split(",").map(x => x.trim()).filter(Boolean) : [];
+        const monthList = monStr ? monStr.split(",").map(x => x.trim()).filter(Boolean) : [];
+
+        const monthKeys = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+        const thisMonthKey = monthKeys[now.getMonth()];
+        const yesterdayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()-1);
+        const yesterdayMonthKey = monthKeys[yesterdayDate.getMonth()];
+
+        const hasToday = !weekdayList.length || weekdayList.includes(todayKey);
+        const hasYesterday = !weekdayList.length || weekdayList.includes(yesterdayKey);
+        const hasThisMonth = !monthList.length || monthList.includes(thisMonthKey);
+        const hasYesterdayMonth = !monthList.length || monthList.includes(yesterdayMonthKey);
+
         if (e > s) {
-            return hasToday && nowMins >= s && nowMins < e;
+            // Simple same-day window must match today weekday + month
+            return hasToday && hasThisMonth && nowMins >= s && nowMins < e;
         }
-        // overnight window (e <= s): today if after start, or yesterday if before end
-        return (hasToday && nowMins >= s) || (hasYesterday && nowMins < e);
+        // Overnight window (wraps past midnight). Active if:
+        //  - After start: today weekday+month and >= start
+        //  - Before end: yesterday weekday+month and < end
+        const afterStart = hasToday && hasThisMonth && nowMins >= s;
+        const beforeEnd = hasYesterday && hasYesterdayMonth && nowMins < e;
+        return afterStart || beforeEnd;
     };
 
     const summarizeDays = (wd: string | undefined) => {
@@ -252,7 +271,12 @@ const RoutinesScreen = () => {
     const windowHeight = Dimensions.get('window').height;
     const windowWidth = Dimensions.get('window').width;
     // viewport height for the timetable (ensures vertical scroll)
-    const TIMETABLE_HEIGHT = Math.max(320, Math.min(HOUR_HEIGHT * 24, windowHeight - 260));
+    // Improve sizing on large / desktop screens: allow taller timetable but cap for usability
+    const TIMETABLE_HEIGHT = (() => {
+        const base = Math.min(HOUR_HEIGHT * 24, windowHeight - 260);
+        if (Platform.OS === 'web' && windowHeight > 900) return Math.min(HOUR_HEIGHT * 24, windowHeight - 320);
+        return Math.max(320, base);
+    })();
     const gridScrollRef = useRef<ScrollView | null>(null);
     // Horizontal sync between day header and grid
     const headerHScrollRef = useRef<ScrollView | null>(null);
@@ -276,7 +300,10 @@ const RoutinesScreen = () => {
     const [weekWide, setWeekWide] = useState(true);
     const GAP = 6; // px gap between day columns
     const FIT_DAY_WIDTH = Math.max(86, Math.floor((windowWidth - 42 - GAP * 6 - 12) / 7));
-    const DAY_WIDTH = weekWide ? 156 : FIT_DAY_WIDTH;
+    // In wide mode, expand day width proportionally with screen width but clamp
+    const DAY_WIDTH = weekWide
+        ? Math.min(240, Math.max(140, Math.floor(windowWidth / 9))) // scale but clamp 140-240
+        : FIT_DAY_WIDTH;
     const [now, setNow] = useState<Date>(new Date());
     const isCurrentMonth = currentDate.getFullYear() === now.getFullYear() && currentDate.getMonth() === now.getMonth();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
@@ -479,7 +506,7 @@ const RoutinesScreen = () => {
                 )}
 
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                    <TouchableOpacity style={[styles.addButton]} onPress={() => setShowModal(true)}>
+                    <TouchableOpacity style={[styles.addButton]} onPress={() => { resetForm(); setShowModal(true); }}>
                         <Ionicons name="add" size={20} color="#fff" />
                         <Text style={styles.addButtonText}>Nueva rutina</Text>
                     </TouchableOpacity>

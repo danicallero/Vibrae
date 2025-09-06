@@ -38,4 +38,13 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
   return res;
 }
 
+// Fetch the service status from the backend
+export async function fetchServiceStatus(): Promise<{ status: string; details: { player: string; scheduler: string } }> {
+  const response = await apiFetch("/control/status");
+  if (!response.ok) {
+    throw new Error(`Failed to fetch service status: ${response.statusText}`);
+  }
+  return response.json();
+}
+
 export { buildApiUrl };

@@ -26,16 +26,22 @@ class Scheduler:
         self._last_scene = None
         self._last_routine = None
 
+    def is_initialized(self) -> bool:
+        return self._thread is not None or not self._stop_event.is_set()
+
+    def is_running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive() and not self._stop_event.is_set()
+
     def start(self):
-        """Start the scheduler loop in a background thread."""
-        logger.info("Scheduler thread started.")
+        # Start background loop if not running.
+        logger.info("Scheduler thread start requested")
         if self._thread is None or not self._thread.is_alive():
             self._stop_event.clear()
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._thread.start()
 
     def resume_if_should_play(self):
-        """Manually resume playback if a routine should currently be active."""
+        # If a routine matches current time, (re)start its scene.
         now = datetime.now()
         routine, scene = self._get_current_routine_and_scene(now)
         if routine and scene:
@@ -47,14 +53,14 @@ class Scheduler:
             self._last_routine = routine
 
     def stop(self):
-        """Stop the scheduler thread."""
-        logger.info("Scheduler thread stopped.")
+        # Signal thread to stop and wait briefly.
+        logger.info("Scheduler thread stop requested")
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=2)
 
     def _run(self):
-        """Main scheduler loop: checks routines and updates player accordingly."""
+        """Poll DB and adjust playback to current matching routine."""
         no_match_logged = False
 
         while not self._stop_event.is_set():
@@ -63,30 +69,31 @@ class Scheduler:
 
             if routine and scene:
                 no_match_logged = False
-                # Ensure scene is up-to-date from DB before playing
+                # Refresh scene record before acting
                 db = SessionLocal()
                 try:
                     latest_scene = db.query(Scene).filter(Scene.id == scene.id).first()
                 finally:
                     db.close()
                 
-                #TODO: rethink the whole stop system. If client is modifying a routine to make it longer and stop event was already sent, this will prevent schedule run
+                # TODO: Rework stop semantics: if user extends a routine after a pending stop,
+                # current logic prevents restart until next iteration.
                 if routine.id == self._last_routine_id and not self.player.is_playing():
-                    continue  # don't restart same routine if stopped
-
-                elif not self.player.is_playing(): #start playback
+                    # Same routine previously stopped; skip immediate restart
+                    continue
+                elif not self.player.is_playing():  # start playback
                     logger.info(f"Starting playback: scene '{latest_scene.path}' at volume {routine.volume}")
                     self.player.play_scene(latest_scene.path, volume=routine.volume)
                     self._last_scene_id = latest_scene.id
                     self._last_routine_id = routine.id
 
-                elif routine.id != self._last_routine_id: #switch routine
+                elif routine.id != self._last_routine_id:  # switch routine
                     logger.info(f"New routine matched (id={routine.id}): playing scene '{latest_scene.path}' at volume {routine.volume}")
                     self.player.switch_scene(latest_scene.path, volume=routine.volume)
                     self._last_scene_id = latest_scene.id
                     self._last_routine_id = routine.id
 
-                elif scene.id != self._last_scene_id: #switch scene among same routine
+                elif scene.id != self._last_scene_id:  # scene change within same routine
                     logger.info(f"Scene change within same routine (id={routine.id}): switching to scene '{latest_scene.path}'")
                     self.player.switch_scene(latest_scene.path)
                     self._last_scene_id = latest_scene.id
@@ -96,7 +103,7 @@ class Scheduler:
 
             else:
                 if self._last_routine_id is not None:
-                    logger.info("No routine matched anymore — stopping playback after current song or 5 minutes.")
+                    logger.info("Routine ended — soft stop after current song or 5 min.")
                     self.player.stop_after_current_or_timeout(timeout_sec=300)
                     self._last_routine_id = None
                     self._last_scene_id = None

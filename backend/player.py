@@ -1,4 +1,8 @@
-# player.py
+"""Audio scene player with queue shuffle, smart crossfades, and scene switching.
+
+Lightweight wrapper around VLC that manages a shuffled queue per scene, timed
+crossfades, and safe handoffs (promotion) between overlapping media players.
+"""
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import os
@@ -26,14 +30,14 @@ class Player:
         self.queue_pos = 0
         self.crossfade_sec = 5
 
-        # Threading
+    # Threading
         self._stop_event = threading.Event()
         self._switch_scene_request: Optional[Tuple[str, Optional[int]]] = None
         self._lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
         self._play_epoch = 0  # monotonic token for active song/crossfade session
 
-        # VLC players (owned by playback thread)
+    # VLC players (owned only by playback thread)
         self._vlc_instance = vlc.Instance()
         self._player_main: Optional[vlc.MediaPlayer] = None
         self._player_next: Optional[vlc.MediaPlayer] = None
@@ -41,24 +45,30 @@ class Player:
 
         self.now_playing: Optional[str] = None
 
-        # Stop control (soft stop)
+    # Soft stop controls
         self._pending_stop = False
         self._pending_stop_deadline: Optional[float] = None
         self._stop_after_song = False
 
-        # Guards
+    # Guards
         self._last_started_path: Optional[str] = None
         self._last_started_t: float = 0.0
         self._same_start_guard_sec = 1.5
         self._crossfade_active = False
         self._started_next_paths = set()
 
-        # Handoff tracking to prevent duplicate starts
+    # Handoff tracking to prevent duplicate starts
         self._handoff_in_progress = False
         self._last_handoff_main_id: Optional[int] = None
-        # Short guard period after a promotion to avoid races where outer loop
-        # instantaneously re-creates a player for the same track.
+    # Guard period after promotion to avoid rapid recreate of same track
         self._promotion_guard_until: float = 0.0
+
+    def is_initialized(self) -> bool:
+        """Lightweight readiness check for health/status endpoints."""
+        try:
+            return self._vlc_instance is not None
+        except Exception:
+            return False
 
     @staticmethod
     def _same_track(a: Optional[str], b: Optional[str]) -> bool:
@@ -334,6 +344,11 @@ class Player:
             logger.info("Playback loop exiting and cleaned up")
 
     def _fade_out_and_stop_sync(self, player: Optional[vlc.MediaPlayer], fade_sec: float = 0.5):
+        """Gradually lowers volume then stops a VLC player (best-effort, blocking).
+
+        Intent: provide a gentle stop to avoid abrupt audio cuts; tolerant of VLC
+        state errors and keeps failures silent in production logs.
+        """
         if not player:
             return
         try:
@@ -364,6 +379,12 @@ class Player:
             logger.warning(f"Error during fade_out: {e}")
 
     def _play_song_non_blocking(self, song: str, next_song: Optional[str], next_volume: Optional[int] = None):
+        """Start one song and optionally prepare/crossfade into the next.
+
+        Intent: own the lifecycle of two MediaPlayers (current + optional next),
+        performing a controlled fade-in, timed crossfade, and promotion of the
+        next player to main without gaps or duplicate starts.
+        """
         self._play_epoch += 1
         epoch = self._play_epoch
         try:
@@ -479,7 +500,7 @@ class Player:
                     except Exception:
                         st_main = None
                 if st_main in terminal_states:
-                    logger.debug(f"Main player id={id(self._player_main)} entered terminal state {st_main}")
+                    logger.debug(f"Main player id={id(self._player_main)} reached terminal state {st_main}")
                     # If we have already started the next player and it is active (not terminal),
                     # promote it to become the main player instead of tearing it down.
                     try:
@@ -490,7 +511,7 @@ class Player:
                                 st_next = None
                             if st_next not in terminal_states:
                                 old_main_id = id(self._player_main) if self._player_main is not None else None
-                                logger.info(f"Main entered terminal but next_player id={id(next_player)} is active; promoting to main")
+                                logger.info(f"Promote active next id={id(next_player)} after main end")
                                 self._player_main = next_player
                                 with self._lock:
                                     if self._player_next is next_player:
@@ -503,7 +524,7 @@ class Player:
                                 self._handoff_in_progress = True
                                 self._last_handoff_main_id = id(self._player_main)
                                 self._promotion_guard_until = _now() + 0.35
-                                logger.info(f"Promoted next_player to main: new_main_id={self._last_handoff_main_id}, now_playing={self.now_playing}")
+                                logger.info(f"Now playing (promoted) id={self._last_handoff_main_id}: {self.now_playing}")
 
                                 # IMPORTANT: snap volume to current target to avoid drift
                                 try:
@@ -520,7 +541,7 @@ class Player:
                                     start_time = _now()
                                     song_length = self._get_song_length(self.now_playing)
                                     fade_start = max(song_length - crossfade_dur, 1.0) if next_song else song_length
-                                    logger.debug(f"After promotion: reset start_time and song_length={song_length}, fade_start={fade_start}")
+                                    logger.debug(f"Promotion resets timing: length={song_length} fade_start={fade_start}")
                                 except Exception:
                                     start_time = _now()
                                     fade_start = _now() + 1.0
@@ -590,7 +611,7 @@ class Player:
                         self._next_index_pending = idx
 
                 if not next_song or self._stop_event.is_set() or epoch != self._play_epoch or self._pending_stop:
-                    logger.info("No distinct next or stop pending at gate — ending current without crossfade.")
+                    logger.info("End without crossfade (no distinct next or stopping)")
                     self._fade_out_and_stop_sync(self._player_main, fade_sec=0.2)
                     self.now_playing = None
                     return
@@ -598,7 +619,7 @@ class Player:
                 try:
                     rp = os.path.realpath(next_song)
                     if rp in self._started_next_paths:
-                        logger.info(f"Next song {next_song} was already started earlier in this epoch; skipping crossfade.")
+                        logger.info(f"Skip crossfade: next already started this epoch {next_song}")
                         self._fade_out_and_stop_sync(self._player_main, fade_sec=0.2)
                         self.now_playing = None
                         return
@@ -689,7 +710,7 @@ class Player:
                                 fade_start_time = _now()
                                 self._last_started_path = next_song
                                 self._last_started_t = _now()
-                                logger.info(f"Next player started for {next_song} (obj={id(next_player)})")
+                                logger.info(f"Start prefade next id={id(next_player)}: {next_song}")
                             except Exception as e:
                                 logger.warning(f"Failed to start next player for {next_song}: {e}")
                                 with self._lock:
@@ -707,6 +728,9 @@ class Player:
                                     pass
                                 next_player = None
 
+            # Crossfade loop: fade out main while fading in next. Once ratio hits 1.0
+            # the 'next' player is promoted to main and we mark a handoff to guard
+            # against duplicate immediate restarts.
             if next_started and next_player and fade_start_time is not None:
                 fade_elapsed = _now() - fade_start_time
                 ratio = min(max(fade_elapsed / crossfade_dur, 0.0), 1.0)
@@ -741,7 +765,7 @@ class Player:
                     self._handoff_in_progress = True
                     self._last_handoff_main_id = new_main_id
                     self._promotion_guard_until = _now() + 0.35
-                    logger.info(f"Crossfade handoff complete: old_main_id={old_main_id}, new_main_id={new_main_id}, now_playing={self.now_playing}")
+                    logger.info(f"Crossfade complete -> main id={new_main_id}: {self.now_playing}")
 
                     # SNAP to exact target to eliminate any rounding drift
                     try:
@@ -759,7 +783,7 @@ class Player:
 
         try:
             if self._player_main:
-                logger.debug(f"Stopping main player id={id(self._player_main)} for {song}")
+                logger.debug(f"Stop main player id={id(self._player_main)} for {song}")
                 self._player_main.stop()
         except Exception:
             pass
@@ -774,6 +798,6 @@ class Player:
                 except Exception:
                     pass
                 self._player_next = None
-            self._crossfade_active = False
+            self._crossfade_active = False  # crossfade lifecycle finalized here
             self._next_index_pending = None
         return

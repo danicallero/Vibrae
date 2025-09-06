@@ -1,13 +1,13 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -e
-# Disable job control notifications to avoid 'Terminated: 15' messages from background jobs
+# Quieter background job handling
 set +m 2>/dev/null || true
 
 # Base dir for relative paths
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# minimal colored output (respects NO_COLOR and non-TTY)
+# Minimal color (respect NO_COLOR and non-TTY)
 if [ -z "$NO_COLOR" ] && [ -t 1 ] && command -v tput >/dev/null 2>&1 && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
   BOLD="$(tput bold)"; RESET="$(tput sgr0)"
   RED="$(tput setaf 1)"; GREEN="$(tput setaf 2)"; YELLOW="$(tput setaf 3)"; BLUE="$(tput setaf 4)"
@@ -19,12 +19,9 @@ ok(){ printf "%s[ok]%s %s\n" "$GREEN" "$RESET" "$*"; }
 warn(){ printf "%s[warn]%s %s\n" "$YELLOW" "$RESET" "$*"; }
 err(){ printf "%s[err ]%s %s\n" "$RED" "$RESET" "$*" 1>&2; }
 
-# license notice
-printf "%sVibrae%s (C) 2025 danicallero\n" "$BOLD" "$RESET"
-printf "This is free software released under the GNU GPLv3; you may redistribute it under certain conditions.\n"
-printf "There is NO WARRANTY, to the extent permitted by law. See LICENSE for details.\n\n"
+printf "%sVibrae%s (GPLv3, no warranty)\n\n" "$BOLD" "$RESET"
 
-# Ensure 'vibrae' command is available on PATH
+# Ensure 'vibrae' is on PATH
 if ! command -v vibrae >/dev/null 2>&1; then
   CLI_SRC="$SCRIPT_DIR/vibrae"
   if [ -f "$CLI_SRC" ]; then
@@ -44,7 +41,7 @@ if ! command -v vibrae >/dev/null 2>&1; then
   fi
 fi
 
-# log directories and rotation
+# Log dirs & rotation
 LOG_DIR="$SCRIPT_DIR/logs"
 HISTORY_DIR="$LOG_DIR/history"
 mkdir -p "$LOG_DIR" "$HISTORY_DIR"
@@ -83,7 +80,7 @@ log_cmd() {
     printf -v arg_quoted '%q' "$arg"
     qcmd+="$arg_quoted "
   done
-  # Run command and prefix each line with a fresh timestamp
+  # Run command and prefix each line with timestamp
   nohup bash -lc "$qcmd 2>&1" | while IFS= read -r line; do
     printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
   done >> "$logfile" 2>&1 &
@@ -109,7 +106,7 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
   set +a
 fi
 
-# Build/export web if missing (optional)
+# Export web build if missing (optional)
 FRONTEND_DIST="${FRONTEND_DIST:-/front/dist}"
 FRONTEND_PORT="${FRONTEND_PORT:-9081}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
@@ -125,7 +122,7 @@ if [ ! -d "$SERVE_ROOT" ]; then
   fi
 fi
 
-# Start frontend (static server)
+# Frontend (static)
 if command -v npx >/dev/null 2>&1 && [ -d "$SERVE_ROOT" ]; then
   info "frontend: port $FRONTEND_PORT"
   rotate_log "$LOG_DIR/serve.log" "$LOG_KEEP" "$HISTORY_DIR"
@@ -136,12 +133,12 @@ else
   warn "frontend static server not started (missing npx or export). API will still run."
 fi
 
-# Start backend API
+# Backend API
 info "backend: port $BACKEND_PORT"
 rotate_log "$LOG_DIR/backend.log" "$LOG_KEEP" "$HISTORY_DIR"
 echo "----- $(date) start uvicorn on :$BACKEND_PORT ($BACKEND_MODULE) -----" >> "$LOG_DIR/backend.log"
 
-# Build a logging config for uvicorn: uvicorn logs -> backend.log; app logs -> player.log
+# Logging config (uvicorn->backend.log, app->player.log)
 rotate_log "$LOG_DIR/player.log" "$LOG_KEEP" "$HISTORY_DIR"
 echo "----- $(date) start player logs -----" >> "$LOG_DIR/player.log"
 LOG_CFG="$SCRIPT_DIR/backend/logging.ini"
@@ -154,44 +151,79 @@ ls -1t "$LOG_DIR"/uvicorn_logging.*.ini 2>/dev/null | sed -e '1,1d' | xargs -I {
 # Remove any obsolete static config if present
 [ -f "$LOG_DIR/uvicorn_logging.ini" ] && rm -f "$LOG_DIR/uvicorn_logging.ini"
 
-# Run uvicorn from the repo root so module imports work regardless of folder name,
-# and capture stdout/stderr into backend.log so early import errors aren't lost.
+# Run uvicorn from repo root so imports work; capture all output.
 (cd "$SCRIPT_DIR" && nohup env PYTHONPATH="$SCRIPT_DIR" \
   uvicorn "$BACKEND_MODULE" --host 0.0.0.0 --port "$BACKEND_PORT" --log-config "$LOG_CFG_RENDERED" \
   >> "$LOG_DIR/backend.log" 2>&1 &) 
 
-# Detach all background jobs from this shell so parent shells won't print termination notices
+# Detach background jobs
 jobs >/dev/null 2>&1 || true
 disown -a 2>/dev/null || true
 
-# Detect OS and start nginx appropriately, rendering config from template with env vars
+# Nginx startup (render config if envsubst available)
 OS_TYPE=$(uname)
 if [[ "$OS_TYPE" == "Darwin" ]]; then
   info "nginx (macOS): start"
   if ! command -v nginx >/dev/null 2>&1; then
     warn "nginx not installed; skipping reverse proxy on macOS."
   else
+  # Preflight: if something already holds :80, attempt cleanup if it's nginx; otherwise skip.
+  if lsof -nP -iTCP:80 -sTCP:LISTEN 2>/dev/null | grep -q nginx; then
+    warn ":80 already in use by existing nginx; stopping it first"
+    pkill -f 'nginx: master process' >/dev/null 2>&1 || sudo pkill -f 'nginx: master process' >/dev/null 2>&1 || true
+    sleep 1
+  elif lsof -nP -iTCP:80 -sTCP:LISTEN 2>/dev/null | grep -q LISTEN; then
+    warn ":80 in use by another process; skipping nginx startup (app still available on backend ports)"
+    START_NGINX=0
+  else
+    START_NGINX=1
+  fi
+  : "${START_NGINX:=1}"
+  if [ "$START_NGINX" -eq 0 ]; then
+    : # skip nginx block entirely
+  else
   # Render nginx config with env vars into a temp file
   if command -v envsubst >/dev/null 2>&1; then
-    # macOS mktemp requires -t with a prefix; it outputs a unique file path
+  # macOS mktemp requires -t
     RENDERED_NGINX_CONF=$(mktemp -t nginx.vibrae)
-    # Only substitute our own variables to avoid touching nginx runtime vars like $host
-    envsubst '${DOMAIN} ${BACKEND_PORT} ${FRONTEND_PORT}' < "$NGINX_CONF" > "$RENDERED_NGINX_CONF"
-    # If nginx is already running, stop it to avoid bind errors and ensure new config path is applied
+  # Substitute only our vars (avoid nginx runtime ones like $host)
+    DOMAIN_VAL="${DOMAIN:-_}"
+    BACKEND_VAL="$BACKEND_PORT"
+    FRONTEND_VAL="$FRONTEND_PORT"
+    DOMAIN="$DOMAIN_VAL" BACKEND_PORT="$BACKEND_VAL" FRONTEND_PORT="$FRONTEND_VAL" \
+      envsubst '${DOMAIN} ${BACKEND_PORT} ${FRONTEND_PORT}' < "$NGINX_CONF" > "$RENDERED_NGINX_CONF"
+  # Restart clean if already running
     if pgrep -x nginx >/dev/null 2>&1; then
       warn "nginx already running; stopping for clean restart"
-      sudo nginx -s stop >/dev/null 2>&1 || true
+      if [ -x "$SCRIPT_DIR/scripts/nginxctl.sh" ]; then
+        sudo "$SCRIPT_DIR/scripts/nginxctl.sh" stop >/dev/null 2>&1 || true
+      else
+        sudo nginx -s stop >/dev/null 2>&1 || true
+      fi
       sleep 1
     fi
-  sudo nginx -c "$RENDERED_NGINX_CONF"
+  if [ -x "$SCRIPT_DIR/scripts/nginxctl.sh" ]; then
+    sudo "$SCRIPT_DIR/scripts/nginxctl.sh" start "$RENDERED_NGINX_CONF"
+  else
+    sudo nginx -c "$RENDERED_NGINX_CONF"
+  fi
   else
     warn "envsubst not found. Using nginx.conf as-is."
     if pgrep -x nginx >/dev/null 2>&1; then
       warn "nginx already running; stopping for clean restart"
-      sudo nginx -s stop >/dev/null 2>&1 || true
+      if [ -x "$SCRIPT_DIR/scripts/nginxctl.sh" ]; then
+        sudo "$SCRIPT_DIR/scripts/nginxctl.sh" stop >/dev/null 2>&1 || true
+      else
+        sudo nginx -s stop >/dev/null 2>&1 || true
+      fi
       sleep 1
     fi
-    sudo nginx -c "$NGINX_CONF"
+    if [ -x "$SCRIPT_DIR/scripts/nginxctl.sh" ]; then
+      sudo "$SCRIPT_DIR/scripts/nginxctl.sh" start "$NGINX_CONF"
+    else
+      sudo nginx -c "$NGINX_CONF"
+    fi
+  fi
   fi
   fi
 else
@@ -204,7 +236,7 @@ else
   fi
 fi
 
-# Start Cloudflare Tunnel (retry on failure)
+# Cloudflare tunnel (retry)
 CF_TUNNEL_TOKEN="${CLOUDFLARE_TUNNEL_TOKEN:-}"
 if [ -z "$CF_TUNNEL_TOKEN" ] || ! command -v cloudflared >/dev/null 2>&1; then
   if [ -z "$CF_TUNNEL_TOKEN" ]; then warn "Cloudflared token missing; skipping tunnel"; fi
@@ -221,28 +253,29 @@ start_cloudflared_with_retry() {
 
   while [ $attempt -le $max_attempts ]; do
     info "cloudflared: attempt $attempt/$max_attempts"
-    # Stop any existing cloudflared instance
+  # Stop existing instance
     pkill -f "cloudflared" >/dev/null 2>&1 || true
-    # Rotate log once (on first attempt), then append
+  # Rotate once (first attempt)
     local CF_LOG="$LOG_DIR/cloudflared.log"
     if [ "$attempt" -eq 1 ]; then
   rotate_log "$CF_LOG" "$LOG_KEEP" "$HISTORY_DIR"
     fi
     echo "----- $(date) cloudflared attempt $attempt -----" >> "$CF_LOG"
-    # Start
-    nohup env -u CLOUDFLARE_TUNNEL_TOKEN cloudflared tunnel run --protocol http2 --token "$CF_TUNNEL_TOKEN" >> "$CF_LOG" 2>&1 &
-    local cf_pid=$!
+  # Start
+  nohup env -u CLOUDFLARE_TUNNEL_TOKEN cloudflared tunnel run --protocol http2 --token "$CF_TUNNEL_TOKEN" >> "$CF_LOG" 2>&1 &
+  local cf_pid=$!
+  echo "$cf_pid" > "$LOG_DIR/cloudflared.pid" 2>/dev/null || true
 
-    # Wait for success signature in logs
+  # Wait for success line
     local elapsed=0
     while [ $elapsed -lt $connect_timeout ]; do
       sleep 1
       elapsed=$((elapsed + 1))
   if grep -q "Registered tunnel connection" "$CF_LOG"; then
-        ok "cloudflared: connected (pid $cf_pid)"
+  ok "cloudflared: connected (pid $cf_pid)"
         return 0
       fi
-      # If process exited early, break and retry
+  # If process died, retry
       if ! ps -p $cf_pid >/dev/null 2>&1; then
         warn "cloudflared: exited; retrying"
         break
@@ -262,7 +295,7 @@ if [ -n "$CF_TUNNEL_TOKEN" ]; then
   start_cloudflared_with_retry || warn "cloudflared failed to connect; app will still run locally"
 fi
 
-## Start periodic rotation in background (nohup)
+# Periodic rotation loop
 (
   set -e
   INTERVAL_HRS="${LOG_ROTATE_INTERVAL_HOURS:-12}"

@@ -1,12 +1,12 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Vibrae CLI — manage install, env, and processes via shell
-# Usage: vibrae [command] [args]
+# Vibrae CLI: install, run, inspect.
+# Usage: vibrae <command> [args]
 
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="0.4.0"
+VERSION="0.4.1"
 
 trap 'err "unexpected error (line ${LINENO})"' ERR
 
@@ -36,22 +36,13 @@ warn(){ printf "%b!%b %s\n" "$YELLOW" "$RESET" "$*"; }
 err(){ printf "%bx%b %s\n" "$RED" "$RESET" "$*" 1>&2; }
 hdr(){ printf "%b%s%b\n" "$BOLD" "$*" "$RESET"; }
 
-banner(){
-  printf "=== %bVibrae%b — sound, simplified ===\n" "$BOLD" "$RESET"
-}
+banner(){ printf "=== %bVibrae%b — sound, simplified ===\n" "$BOLD" "$RESET"; }
 
-license_notice(){
-  printf "%bVibrae%b (C) 2025 Daniel Callero\n" "$BOLD" "$RESET"
-  printf "This is free software released under the GNU GPLv3; you may redistribute it under certain conditions.\n"
-  printf "There is NO WARRANTY, to the extent permitted by law. See LICENSE for details.\n\n"
-}
+license_notice(){ printf "%bVibrae%b (GPLv3, no warranty)\n" "$BOLD" "$RESET"; }
 
 contact_information(){
-  printf "%bVibrae%b (C) 2025 Daniel Callero\n\n" "$BOLD" "$RESET"
-  printf "Vibrae is a free and open-source project distributed under the GNU GPLv3 license. Thus, there is no warranty of any kind.\n"
-  printf "Should you encounter any issue, feel free to raise an issue in the progect's GitHub page. Run ./vibrae github to open the repository.\n"
-  printf "Feel free to contact me through this %be-mail%b: %bvibrae@danicallero.es%b\n" "$BOLD" "$RESET" "$BOLD" "$RESET"
-
+  printf "%bContact%b\n" "$BOLD" "$RESET"
+  printf "Issues: GitHub repo (vibrae). Email: vibrae@danicallero.es\n"
 }
 
 usage(){
@@ -64,29 +55,29 @@ ${BOLD}Commands${RESET}
   ${BOLD}start${RESET} | up          Start the app (run.sh)
   ${BOLD}stop${RESET} | down         Stop the app (stop.sh)
   ${BOLD}restart${RESET}             Stop then start
-  ${BOLD}status${RESET}              Show service status (pretty)
-  ${BOLD}logs${RESET} [name] [n]     Tail logs (backend|player|serve|cloudflared). Default all, n=100
-  ${BOLD}front restart${RESET}        Restart only the frontend static server (npx)
+  ${BOLD}status${RESET}              Show service status
+  ${BOLD}logs${RESET} [name] [n]     Tail logs (backend|player|serve|cloudflared). Default all; n=100
+  ${BOLD}front restart${RESET}        Restart only the static server (npx)
   ${BOLD}open${RESET}                Open web UI in browser
   ${BOLD}url${RESET}                 Print local/public URLs
 
   ${BOLD}env show${RESET}            Print .env
-  ${BOLD}env edit${RESET}            Open .env in editor (EDITOR/VISUAL/TextEdit/nano)
+  ${BOLD}env edit${RESET}            Open .env in editor
   ${BOLD}env set${RESET} KEY=VALUE   Set or add a key
-  ${BOLD}env sync${RESET}            Add missing recommended keys with defaults
+  ${BOLD}env sync${RESET}            Add missing recommended keys
 
-  ${BOLD}autostart${RESET} on|off    Toggle AUTOSTART in .env
+  ${BOLD}autostart${RESET} on|off    Toggle AUTOSTART
   ${BOLD}source detect${RESET}       Show resolved source (folder:/path or usb:LABEL)
 
-  ${BOLD}check-env${RESET}           Validate env; highlight missing/weak values
+  ${BOLD}check-env${RESET}           Validate .env values
   ${BOLD}doctor${RESET}              Check required tools
   ${BOLD}help${RESET}                Show this help (also available inside the shell)
-  ${BOLD}shell${RESET}               Start interactive shell (default when no args)
+  ${BOLD}shell${RESET}               Interactive shell
   ${BOLD}clear${RESET}               Clear the screen
   
-    ${BOLD}pi install${RESET}          Raspberry Pi: setup systemd, nginx
-    ${BOLD}pi start|stop|status${RESET} Manage services on Pi
-    ${BOLD}pi logs${RESET} [unit]      Tail journal logs (e.g., vibrae-backend)
+    ${BOLD}pi install${RESET}          Pi setup (systemd, nginx)
+    ${BOLD}pi start|stop|status${RESET} Pi service control
+    ${BOLD}pi logs${RESET} [unit]      Pi journal logs
 EOF
 }
 
@@ -168,11 +159,27 @@ cmd_status(){
   local mode="backend"
   if echo "$psout" | grep -E "(serve -s|npx serve)" >/dev/null; then mode="npx"; fi
   printf "\nFrontend: %s\n" "$mode"
-  # API proxy check (nginx route)
+  # health via backend
   local api_url="http://127.0.0.1/api/health"
-  local code
-  code=$(curl -s -o /dev/null -w "%{http_code}" "$api_url" || echo "000")
-  printf "API (/api): HTTP %s\n" "$code"
+  local json; json="$(curl -s "$api_url" || echo '')"
+  if [ -n "$json" ]; then
+    local backend fe fe_mode player proxy cf fe_srv
+    backend=$(echo "$json" | sed -n 's/.*"backend"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+    fe=$(echo "$json" | sed -n 's/.*"frontend"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+    fe_mode=$(echo "$json" | sed -n 's/.*"frontend_mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+    player=$(echo "$json" | sed -n 's/.*"player"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+    proxy=$(echo "$json" | sed -n 's/.*"proxy"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+    cf=$(echo "$json" | sed -n 's/.*"cloudflared"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+    fe_srv=$(echo "$json" | sed -n 's/.*"frontend_server"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+    printf "\nHealth\n"
+    printf "  backend:   %s\n" "${backend:-unknown}"
+    printf "  player:    %s\n" "${player:-unknown}"
+    printf "  frontend:  %s (mode=%s, static=%s)\n" "${fe:-unknown}" "${fe_mode:-auto}" "${fe_srv:-down}"
+    printf "  proxy:     %s\n" "${proxy:-unknown}"
+    printf "  tunnel:    %s\n" "${cf:-unknown}"
+  else
+    printf "API (/api/health): unreachable\n"
+  fi
 }
 
 cmd_logs(){
@@ -393,7 +400,8 @@ run_interactive(){
 }
 
 dispatch(){
-  case "$1" in
+  # With 'set -u', $1 may be unset when no args are passed; default to empty
+  case "${1-}" in
   --version|version) shift; echo "vibrae ${VERSION}"; return 0;;
     install) shift; cmd_install "$@";;
     start|up) shift; cmd_start "$@";;
@@ -408,7 +416,7 @@ dispatch(){
     contact) shift; contact_information "$@";;
     github) shift; cmd_github "$@";;
 
-    env) shift; case "$1" in show) shift; cmd_env_show;; edit) shift; cmd_env_edit;; set) shift; cmd_env_set "$@";; sync) shift; cmd_env_sync;; *) usage; return 1;; esac;;
+  env) shift; case "${1-}" in show) shift; cmd_env_show;; edit) shift; cmd_env_edit;; set) shift; cmd_env_set "$@";; sync) shift; cmd_env_sync;; *) usage; return 1;; esac;;
 
     autostart) shift; cmd_autostart "$@";;
     source) shift; case "$1" in detect) shift; cmd_source_detect;; *) usage; return 1;; esac;;
@@ -417,7 +425,7 @@ dispatch(){
   check) shift; cmd_check_env;;
     doctor) shift; cmd_doctor;;
   clear) clear 2>/dev/null || printf '\033c';;
-  pi) shift; case "$1" in install) shift; cmd_pi_install;; start) shift; cmd_pi_start;; stop) shift; cmd_pi_stop;; status) shift; cmd_pi_status;; logs) shift; cmd_pi_logs "$@";; *) usage; return 1;; esac;;
+  pi) shift; case "${1-}" in install) shift; cmd_pi_install;; start) shift; cmd_pi_start;; stop) shift; cmd_pi_stop;; status) shift; cmd_pi_status;; logs) shift; cmd_pi_logs "$@";; *) usage; return 1;; esac;;
     help|--help|-h) usage;;
     shell|"") run_interactive;;
     *) err "Unknown command: $1"; usage; return 1;;

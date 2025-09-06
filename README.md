@@ -22,7 +22,8 @@
 7. [Logs & Monitoring](#logs--monitoring)
 8. [CLI Usage](#cli-usage)
 9. [Screenshots](#screenshots)
-10. [License](#license)
+10. [Testing](#testing)
+11. [License](#license)
 
 ---
 
@@ -262,6 +263,46 @@ Notes
 ## Screenshots
 
 
+
+
+## Testing
+
+### Overview
+Automated tests cover the refactored playback engine (crossfade, guard window, shutdown) using a lightweight mock of `python-vlc`. This allows fast, deterministic runs with no audio output.
+
+### Run Tests
+From the project root:
+
+```
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pytest -q
+```
+
+### VLC Mock Design
+- Defined in `tests/conftest.py` as an autouse fixture `mock_vlc` (no import changes needed).
+- Replaces the real `vlc` module *before* `backend.player` is (re)imported.
+- Media duration is short (a few seconds) so crossfades complete quickly.
+- Player state is exercised via the real playback thread; only the media/volume/time functions are simulated.
+
+### Adding More Tests
+- Use the provided `player_module` fixture to access a freshly reloaded `backend.player` module that already sees the mock.
+- Instantiate `Player` normally; inject a `notify_cb` to capture events (see `tests/test_player_crossfade.py`).
+- For timing assertions prefer the helper `wait_until(predicate, timeout, poll_interval)` instead of ad‑hoc sleeps.
+
+### Customizing Mock Behavior
+Adjust or extend the mock in `tests/conftest.py`:
+- Change track duration returned by `MockMedia.get_duration()` to lengthen or shorten crossfade windows.
+- Add extra state fields if you need to assert intermediate phases.
+
+### Using Real VLC (Optional)
+If you want an integration run with real audio:
+1. Temporarily comment out or rename the `mock_vlc` autouse fixture in `tests/conftest.py`.
+2. Ensure local VLC runtime / `python-vlc` is installed.
+3. Provide actual media files under `music/`.
+
+Keep such runs separate; unit tests should remain fast and silent by default.
 
 ---
 

@@ -9,4 +9,5 @@ sqlalchemy
 python-jose[cryptography]
 python-dotenv
 python-vlc
+pytest
 

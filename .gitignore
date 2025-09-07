@@ -16,14 +16,25 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
-# Logs
+.venv
+
+# Logs & history (keep directory but ignore contents except placeholder if desired)
 logs/
-*.log
+logs/history/
+logs/uvicorn_logging.*.ini
+!logs/.gitkeep
 
 # Environment variables
 .env
 .env.save
 .installed
+.env.runtime
+
+# Encrypted env directory (plaintext & keys ignored; encrypted files committed)
+config/env/.env.runtime
+config/env/.env.runtime.save
+config/env/keys/
+!config/env/.gitkeep
 
 # Frontend/Node (top-level)
 node_modules/
@@ -31,16 +42,16 @@ dist/
 .expo/
 *.expo
 *.expo-shared/
-front/dist/
-front/node_modules/
-front/android/
-front/ios/
+apps/web/dist/
+apps/web/node_modules/
+apps/web/android/
+apps/web/ios/
 
 # Build outputs and caches
 build/
 .cache/
 coverage/
-.coverage
+.coverage*
 
 # macOS finder files
 .DS_Store

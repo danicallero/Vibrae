@@ -24,8 +24,8 @@ pip install -U pip wheel
 pip install -r requirements.txt
 
 echo "[info] frontend export (optional)"
-if [ ! -d "$ROOT_DIR/front/dist" ]; then
-  echo "[warn] front/dist not found. For best performance, copy a prebuilt export to front/dist." >&2
+if [ ! -d "$ROOT_DIR/apps/web/dist" ]; then
+  echo "[warn] apps/web/dist not found. For best performance, copy a prebuilt export to apps/web/dist." >&2
 fi
 
 echo "[info] create systemd units"
@@ -44,8 +44,8 @@ req(){ k="$1"; grep -qE "^${k}=" "$ENV_FILE" || { echo "[warn] missing $k in .en
 req SECRET_KEY
 req BACKEND_PORT
 req FRONTEND_PORT
-grep -qE '^BACKEND_MODULE=' "$ENV_FILE" || echo 'BACKEND_MODULE=backend.main:app' >> "$ENV_FILE"
-grep -qE '^FRONTEND_DIST=' "$ENV_FILE" || echo 'FRONTEND_DIST=/front/dist' >> "$ENV_FILE"
+grep -qE '^BACKEND_MODULE=' "$ENV_FILE" || echo 'BACKEND_MODULE=apps.api.src.vibrae_api.main:app' >> "$ENV_FILE"
+grep -qE '^FRONTEND_DIST=' "$ENV_FILE" || echo 'FRONTEND_DIST=/apps/web/dist' >> "$ENV_FILE"
 grep -qE '^MUSIC_DIR=' "$ENV_FILE" || echo 'MUSIC_DIR=music' >> "$ENV_FILE"
 grep -qE '^LOG_LEVEL=' "$ENV_FILE" || echo 'LOG_LEVEL=INFO' >> "$ENV_FILE"
 [ $missing -gt 0 ] && echo "[warn] $missing required env value(s) missing; please edit $ENV_FILE"
@@ -62,7 +62,7 @@ EnvironmentFile=$ROOT_DIR/.env
 Environment=PYTHONPATH=$ROOT_DIR
 ExecStart=$ROOT_DIR/venv/bin/uvicorn \
   
-  ${BACKEND_MODULE:-backend.main:app} --host 0.0.0.0 --port ${BACKEND_PORT:-8000}
+  ${BACKEND_MODULE:-apps.api.src.vibrae_api.main:app} --host 0.0.0.0 --port ${BACKEND_PORT:-8000}
 Restart=always
 RestartSec=3
 
@@ -79,7 +79,7 @@ After=network.target
 Type=simple
 WorkingDirectory=$ROOT_DIR
 EnvironmentFile=$ROOT_DIR/.env
-ExecStart=/usr/bin/env npx serve -s "$ROOT_DIR${FRONTEND_DIST:-/front/dist}" -l ${FRONTEND_PORT:-9081}
+ExecStart=/usr/bin/env npx serve -s "$ROOT_DIR${FRONTEND_DIST:-/apps/web/dist}" -l ${FRONTEND_PORT:-9081}
 Restart=always
 RestartSec=3
 
@@ -109,7 +109,7 @@ echo "[info] enable and start services"
 systemctl daemon-reload
 systemctl enable vibrae-backend.service || true
 ENABLE_FRONT=0
-FRONT_DIR="$ROOT_DIR${FRONTEND_DIST:-/front/dist}"
+FRONT_DIR="$ROOT_DIR${FRONTEND_DIST:-/apps/web/dist}"
 if command -v npx >/dev/null 2>&1 && [ -d "$FRONT_DIR" ]; then
   ENABLE_FRONT=1
   systemctl enable vibrae-frontend.service || true

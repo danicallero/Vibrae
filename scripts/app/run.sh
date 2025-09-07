@@ -107,16 +107,16 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
 fi
 
 # Export web build if missing (optional)
-FRONTEND_DIST="${FRONTEND_DIST:-/front/dist}"
+FRONTEND_DIST="${FRONTEND_DIST:-/apps/web/dist}"
 FRONTEND_PORT="${FRONTEND_PORT:-9081}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
-BACKEND_MODULE="${BACKEND_MODULE:-backend.main:app}"
+BACKEND_MODULE="${BACKEND_MODULE:-apps.api.src.vibrae_api.main:app}"
 
 SERVE_ROOT="$SCRIPT_DIR$FRONTEND_DIST"
 if [ ! -d "$SERVE_ROOT" ]; then
   if command -v npm >/dev/null 2>&1; then
     warn "missing frontend export at $SERVE_ROOT; exporting now"
-    (cd "$SCRIPT_DIR/front" && npx expo export --platform web) || warn "web export failed; frontend may be unavailable"
+  (cd "$SCRIPT_DIR/apps/web" && npx expo export --platform web) || warn "web export failed; frontend may be unavailable"
   else
     warn "Node/npm not available; skipping web export. Frontend may be unavailable."
   fi
@@ -138,23 +138,16 @@ info "backend: port $BACKEND_PORT"
 rotate_log "$LOG_DIR/backend.log" "$LOG_KEEP" "$HISTORY_DIR"
 echo "----- $(date) start uvicorn on :$BACKEND_PORT ($BACKEND_MODULE) -----" >> "$LOG_DIR/backend.log"
 
-# Logging config (uvicorn->backend.log, app->player.log)
+## Logging config (simplified)
+# Player/application logs land in backend.log via shared config; keep a dedicated player.log rotated for legacy readers.
 rotate_log "$LOG_DIR/player.log" "$LOG_KEEP" "$HISTORY_DIR"
 echo "----- $(date) start player logs -----" >> "$LOG_DIR/player.log"
-LOG_CFG="$SCRIPT_DIR/backend/logging.ini"
-LOG_LEVEL_EFF="$(echo "${LOG_LEVEL:-INFO}" | tr '[:lower:]' '[:upper:]')"
-# Render a per-run logging config with the effective log level
-LOG_CFG_RENDERED="$LOG_DIR/uvicorn_logging.$(date +%Y%m%d-%H%M%S).ini"
-sed "s/__LOG_LEVEL__/${LOG_LEVEL_EFF}/g" "$LOG_CFG" > "$LOG_CFG_RENDERED"
-# Prune older rendered configs; keep the latest 3
-ls -1t "$LOG_DIR"/uvicorn_logging.*.ini 2>/dev/null | sed -e '1,1d' | xargs -I {} rm -f -- "{}" 2>/dev/null || true
-# Remove any obsolete static config if present
-[ -f "$LOG_DIR/uvicorn_logging.ini" ] && rm -f "$LOG_DIR/uvicorn_logging.ini"
+LOG_CFG="$SCRIPT_DIR/config/logging.ini"
 
 # Run uvicorn from repo root so imports work; capture all output.
-(cd "$SCRIPT_DIR" && nohup env PYTHONPATH="$SCRIPT_DIR" \
-  uvicorn "$BACKEND_MODULE" --host 0.0.0.0 --port "$BACKEND_PORT" --log-config "$LOG_CFG_RENDERED" \
-  >> "$LOG_DIR/backend.log" 2>&1 &) 
+(cd "$SCRIPT_DIR" && nohup env PYTHONPATH="$SCRIPT_DIR:$(pwd)/packages/core/src:$(pwd)/apps/api/src" \
+  uvicorn "$BACKEND_MODULE" --host 0.0.0.0 --port "$BACKEND_PORT" --log-config "$LOG_CFG" \
+  >> "$LOG_DIR/backend.log" 2>&1 &)
 
 # Detach background jobs
 jobs >/dev/null 2>&1 || true

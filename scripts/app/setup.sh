@@ -103,15 +103,15 @@ PY
 
 info "database"
 if [ ! -f data/garden.db ]; then
-	# Run from repo root so 'backend' package imports resolve
-	(cd "$SCRIPT_DIR" && python -m backend.init_db)
+	# Initialize database using vibrae_core
+	(cd "$SCRIPT_DIR" && PYTHONPATH="$SCRIPT_DIR:$(pwd)/packages/core/src" python -m vibrae_core.init_db)
 fi
 
 info "node deps"
 if command -v npm >/dev/null 2>&1; then
-	(cd front && npm install)
+	(cd apps/web && npm install)
 else
-	warn "npm not found; skipping front dependencies. Frontend export/server will be unavailable."
+	warn "npm not found; skipping web app dependencies. Frontend export/server will be unavailable."
 fi
 
 # Note: ffmpeg is optional and not required on macOS.
@@ -140,8 +140,8 @@ fi
 if ! command -v nginx >/dev/null 2>&1; then
 	warn "nginx not installed; reverse proxy will be skipped on this machine."
 fi
-if ! grep -qE "^BACKEND_MODULE=" "$ENV_FILE"; then echo "BACKEND_MODULE=backend.main:app" >> "$ENV_FILE"; fi
-if ! grep -qE "^FRONTEND_DIST=" "$ENV_FILE"; then echo "FRONTEND_DIST=/front/dist" >> "$ENV_FILE"; fi
+if ! grep -qE "^BACKEND_MODULE=" "$ENV_FILE"; then echo "BACKEND_MODULE=apps.api.src.vibrae_api.main:app" >> "$ENV_FILE"; fi
+if ! grep -qE "^FRONTEND_DIST=" "$ENV_FILE"; then echo "FRONTEND_DIST=/apps/web/dist" >> "$ENV_FILE"; fi
 if ! grep -qE "^MUSIC_DIR=" "$ENV_FILE"; then echo "MUSIC_DIR=music" >> "$ENV_FILE"; fi
 if ! grep -qE "^LOG_LEVEL=" "$ENV_FILE"; then echo "LOG_LEVEL=INFO" >> "$ENV_FILE"; fi
 if [ $MISSING -gt 0 ]; then

@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Install syft
         uses: anchore/sbom-action/download-syft@v0.17.9
       - name: Generate SBOM (repo)

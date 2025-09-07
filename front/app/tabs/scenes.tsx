@@ -28,7 +28,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { styles } from "../../assets/styles/home.styles";
 import { sceneStyles } from "../../assets/styles/scenes.styles";
 import { COLORS } from "../../constants/Colors";
-import { getToken } from "../../lib/storage";
 import { apiFetch } from "../../lib/api";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";

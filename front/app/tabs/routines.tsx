@@ -20,7 +20,6 @@ import { Dimensions } from "react-native";
 import DropDownPicker from "react-native-dropdown-picker";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { getToken } from "../../lib/storage";
 import { apiFetch } from "../../lib/api";
 import { useRouter } from "expo-router";
 import { styles } from "../../assets/styles/home.styles";
@@ -1024,7 +1023,7 @@ const RoutinesScreen = () => {
 
 export default RoutinesScreen;
 
-// Color assignment helper kept outside component for clarity
+// Color assignment helper
 function assignRoutineColors(existing: Record<number,string>, routines: Routine[]) {
     const colorPalette = [
         '#4c6ef5','#228be6','#15aabf','#12b886','#82c91e','#fab005','#fd7e14','#fa5252','#e64980','#7950f2',

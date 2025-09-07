@@ -6,7 +6,6 @@ from fastapi.responses import FileResponse
 from typing import Optional, List, Dict
 from pathlib import Path
 import os
-import time
 import re
 
 from backend.auth import get_current_user, decode_token

@@ -3,7 +3,7 @@ fastapi
 uvicorn
 websockets
 passlib[bcrypt]
-bcrypt<4.0
+bcrypt<5.0
 pydantic
 sqlalchemy
 python-jose[cryptography]

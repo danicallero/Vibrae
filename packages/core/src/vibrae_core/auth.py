@@ -40,6 +40,10 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
+# Backwards compatibility: legacy name expected by older init_db
+def get_password_hash(password: str) -> str:  # pragma: no cover - thin wrapper
+    return hash_password(password)
+
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
@@ -92,6 +96,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 __all__ = [
     "verify_password",
     "hash_password",
+    "get_password_hash",
     "create_access_token",
     "decode_token_raw",
     "decode_token",

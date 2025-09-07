@@ -61,6 +61,14 @@ class Scheduler:
         if self._thread:
             self._thread.join(timeout=2)
 
+    def start_background(self):
+        """Backward compat alias for legacy API."""
+        self.start()
+
+    def stop_background(self):
+        """Backward compat alias for legacy API."""
+        self.stop()
+
     def _run(self):  # pragma: no cover (timing + thread loop)
         no_match_logged = False
         while not self._stop_event.is_set():
@@ -143,5 +151,3 @@ class Scheduler:
 
 __all__ = ["Scheduler"]
 """Scheduler service wrapper referencing legacy implementation."""
-from __future__ import annotations
-# Legacy import compatibility removed; use vibrae_core.scheduler.Scheduler directly

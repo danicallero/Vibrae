@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, List
 import os, sys
+from pathlib import Path
+from dotenv import load_dotenv  # type: ignore
 
 # ---- Helpers (mostly verbatim copy; minor renames allowed) ----
 
@@ -87,9 +89,37 @@ class Settings:
 
     def repo_root(self) -> str:
         base = self._bundle_base()
-        if base:
+        if base:  # Frozen bundle base (PyInstaller, etc.)
             return base
-        return os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
+        # Start from this file directory and walk upward looking for project markers
+        cur = os.path.abspath(os.path.dirname(__file__))
+        markers = ("music", "requirements.txt", "README.md", ".git", "vibrae")
+        for _ in range(8):  # safety limit to avoid infinite loop
+            if any(os.path.exists(os.path.join(cur, m)) for m in markers):
+                # Heuristic: prefer directory that has both 'music' and 'packages' as likely repo root
+                if os.path.isdir(os.path.join(cur, "music")):
+                    return cur
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
+        # Fallback: original relative ascent (4 levels to reach repo root from packages/core/src/vibrae_core)
+        return os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../"))
+
+    def load_backend_env(self) -> None:
+        """Load canonical backend env file if present (idempotent)."""
+        env_file = Path(self.repo_root()) / "config" / "env" / ".env.backend"
+        if env_file.exists():
+            load_dotenv(env_file, override=False)
+
+    def debug_print(self) -> None:  # lightweight runtime trace
+        if _env("VIBRAE_DEBUG_CONFIG", "0") in ("1", "true", "yes"):  # opt-in
+            try:
+                print(f"[config] repo_root={self.repo_root()}")
+                print(f"[config] music_base={self.effective_music_base()}")
+                print(f"[config] web_dist={self.effective_web_dist()}")
+            except Exception as e:  # pragma: no cover
+                print(f"[config] debug error: {e}")
 
     def resolve_path(self, p: Optional[str]) -> Optional[str]:
         if not p:
@@ -116,3 +146,9 @@ class Settings:
             if p and os.path.isdir(p):
                 return p
         return None
+
+    @property
+    def media_root(self) -> str:
+        """Backward compat: legacy code referenced settings.media_root.
+        Returns resolved base path for music content."""
+        return self.effective_music_base()

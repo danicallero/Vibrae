@@ -100,18 +100,38 @@ else
   exit 1
 fi
 
-# Load .env (export all vars)
-if [ -f "$ROOT_DIR/.env" ]; then
-  set -a
-  . "$ROOT_DIR/.env"
-  set +a
+# Load layered env: base .env -> backend -> frontend (new canonical names)
+set -a
+[ -f "$ROOT_DIR/.env" ] && . "$ROOT_DIR/.env"
+
+BACKEND_ENV_FILE="$ROOT_DIR/config/env/.env.backend"
+LEGACY_BACKEND_FILE="$ROOT_DIR/config/env/.env.runtime"
+if [ -f "$BACKEND_ENV_FILE" ]; then
+  info "env: load backend overrides (.env.backend)"
+  . "$BACKEND_ENV_FILE"
+elif [ -f "$LEGACY_BACKEND_FILE" ]; then
+  warn "legacy backend env .env.runtime detected; run 'vibrae env migrate'"
+  . "$LEGACY_BACKEND_FILE"
 fi
+
+FRONTEND_ENV_FILE="$ROOT_DIR/config/env/.env.frontend"
+LEGACY_FRONTEND_FILE="$ROOT_DIR/config/env/.env.frontend.runtime"
+if [ -f "$FRONTEND_ENV_FILE" ]; then
+  info "env: load frontend overrides (.env.frontend)"
+  . "$FRONTEND_ENV_FILE"
+elif [ -f "$LEGACY_FRONTEND_FILE" ]; then
+  warn "legacy frontend env .env.frontend.runtime detected; run 'vibrae env migrate'"
+  . "$LEGACY_FRONTEND_FILE"
+fi
+set +a
 
 # Export web build if missing (optional)
 FRONTEND_DIST="${FRONTEND_DIST:-/apps/web/dist}"
 FRONTEND_PORT="${FRONTEND_PORT:-9081}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 BACKEND_MODULE="${BACKEND_MODULE:-apps.api.src.vibrae_api.main:app}"
+
+# (frontend already handled in layered section above)
 
 SERVE_ROOT="$ROOT_DIR$FRONTEND_DIST"
 if [ ! -d "$SERVE_ROOT" ]; then
@@ -143,7 +163,17 @@ echo "----- $(date) start uvicorn on :$BACKEND_PORT ($BACKEND_MODULE) -----" >> 
 # Player/application logs land in backend.log via shared config; keep a dedicated player.log rotated for legacy readers.
 rotate_log "$LOG_DIR/player.log" "$LOG_KEEP" "$HISTORY_DIR"
 echo "----- $(date) start player logs -----" >> "$LOG_DIR/player.log"
-LOG_CFG="$ROOT_DIR/config/logging.ini"
+LOG_CFG_TEMPLATE="$ROOT_DIR/config/logging.ini"
+LOG_LEVEL_EFFECTIVE="${LOG_LEVEL:-INFO}"
+# Render logging config (replace __LOG_LEVEL__) into logs dir for uvicorn
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+RENDERED_LOG_CFG="$LOG_DIR/logging.rendered.ini"
+if [ -f "$LOG_CFG_TEMPLATE" ]; then
+  sed "s/__LOG_LEVEL__/${LOG_LEVEL_EFFECTIVE}/g" "$LOG_CFG_TEMPLATE" > "$RENDERED_LOG_CFG" 2>/dev/null || cp "$LOG_CFG_TEMPLATE" "$RENDERED_LOG_CFG"
+else
+  echo "; no logging template found, fallback to basic" > "$RENDERED_LOG_CFG"
+fi
+LOG_CFG="$RENDERED_LOG_CFG"
 
 # Run uvicorn from repo root so imports work; capture all output.
 (cd "$ROOT_DIR" && nohup env PYTHONPATH="$ROOT_DIR:$(pwd)/packages/core/src:$(pwd)/apps/api/src" \

@@ -42,6 +42,12 @@ secrets-decrypt: ## Decrypt runtime env to .env.runtime (requires sops)
 secrets-edit: ## Securely edit runtime env (decrypt -> edit -> re-encrypt; requires sops)
 	./vibrae env edit-sec
 
+frontend-secrets-decrypt: ## Decrypt frontend runtime env to .env.frontend.runtime (requires sops)
+	sops --decrypt config/env/.env.frontend.runtime.enc > .env.frontend.runtime
+
+frontend-secrets-edit: ## Securely edit frontend runtime env (decrypt -> edit -> re-encrypt; requires sops)
+	./vibrae env f-edit-sec
+
 sbom: ## Generate SBOM via syft
 	which syft >/dev/null 2>&1 || (echo "Install syft first" && exit 1)
 	syft dir:. -o cyclonedx-json > sbom-repo.cdx.json

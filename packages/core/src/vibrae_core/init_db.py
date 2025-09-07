@@ -14,7 +14,7 @@ DEFAULT_ADMIN_USER = os.environ.get("VIBRAE_ADMIN_USER", "admin")
 DEFAULT_ADMIN_PASS = os.environ.get("VIBRAE_ADMIN_PASS", "admin")
 
 
-def init_db(create_admin: bool = True) -> None:
+def init_db(create_admin: bool = False) -> None:
     """Create tables and optional seed records.
 
     Parameters
@@ -29,7 +29,7 @@ def init_db(create_admin: bool = True) -> None:
     with Session(engine) as session:
         user_count = session.query(User).count()
         if user_count == 0:
-            admin = User(username=DEFAULT_ADMIN_USER, hashed_password=get_password_hash(DEFAULT_ADMIN_PASS))
+            admin = User(username=DEFAULT_ADMIN_USER, password_hash=get_password_hash(DEFAULT_ADMIN_PASS))
             session.add(admin)
             session.commit()
 

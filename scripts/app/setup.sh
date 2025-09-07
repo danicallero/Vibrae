@@ -44,19 +44,13 @@ if [[ "$(uname)" == "Darwin" ]]; then
 		# cloudflared (best-effort)
 		command -v cloudflared >/dev/null 2>&1 || brew install -q cloudflare/cloudflare/cloudflared || brew install -q cloudflared || true
 		# VLC runtime (for python-vlc)
-		if ! python3 - <<'PY' >/dev/null 2>&1; then
-import vlc
-import sys
+		python3 - <<'PY' >/dev/null 2>&1 || brew install --cask -q vlc || true
+import vlc, sys
 try:
-		_=vlc.Instance()
-		sys.exit(0)
+    _ = vlc.Instance(); sys.exit(0)
 except Exception:
-		sys.exit(1)
-
+    sys.exit(1)
 PY
-		# If the heredoc python check failed (exit != 0), install VLC
-			brew install --cask -q vlc || true
-		fi
 	else
 		warn "Homebrew not available; skipping macOS auto-install."
 	fi
@@ -72,6 +66,22 @@ info "pip deps"
 pip install -U pip wheel >/dev/null 2>&1 || true
 pip install -r requirements.txt
 
+info "editable install: vibrae_core"
+if [ -f packages/core/pyproject.toml ]; then
+	pip install -e packages/core >/dev/null 2>&1 || warn "editable vibrae_core install failed"
+fi
+
+# Python version advisory (<3.11)
+PY_OK=$(python - <<'PY'
+import sys
+m, n = sys.version_info[:2]
+print(1 if (m>3 or (m==3 and n>=11)) else 0)
+PY
+)
+if [ "$PY_OK" != "1" ]; then
+	warn "Python $(python -V 2>&1) < 3.11; upgrade recommended"
+fi
+
 info "validating Python packages"
 python - <<'PY'
 import sys
@@ -81,7 +91,7 @@ mods = [
 	("sqlalchemy", "SQLAlchemy"),
 	("pydantic", "Pydantic"),
 	("jose", None),
-	("python_dotenv", None),
+	("dotenv", "python-dotenv"),
 	("websockets", "websockets"),
 	("vlc", "python-vlc"),
 ]
@@ -103,10 +113,7 @@ except Exception:
 sys.exit(0)
 PY
 
-info "database"
-if [ ! -f data/garden.db ]; then
-	(cd "$ROOT_DIR" && PYTHONPATH="$ROOT_DIR:$(pwd)/packages/core/src" python -m vibrae_core.init_db)
-fi
+# Database initialization deferred; use 'vibrae db init' after configuring env
 
 info "node deps"
 if command -v npm >/dev/null 2>&1; then
@@ -117,14 +124,33 @@ fi
 
 # Note: ffmpeg is optional and not required on macOS.
 
-info "env validation"
-ENV_FILE="$ROOT_DIR/.env"
+info "env validation (backend canonical env)"
+ENV_DIR="$ROOT_DIR/config/env"
+mkdir -p "$ENV_DIR" 2>/dev/null || true
+ENV_FILE="$ENV_DIR/.env.backend"
 if [ ! -f "$ENV_FILE" ]; then
-	cp -n "$ROOT_DIR/.env.example" "$ENV_FILE" 2>/dev/null || true
+	if [ -f "$ENV_DIR/.env.backend.example" ]; then
+		cp "$ENV_DIR/.env.backend.example" "$ENV_FILE" && ok "seeded $(basename "$ENV_FILE") from example"
+	else
+		cat > "$ENV_FILE" <<'EOENV'
+# Vibrae environment
+BACKEND_PORT=8000
+BACKEND_MODULE=apps.api.src.vibrae_api.main:app
+FRONTEND_PORT=9081
+FRONTEND_DIST=/apps/web/dist
+MUSIC_MODE=folder
+MUSIC_DIR=music
+SECRET_KEY=change-me-please
+LOG_LEVEL=INFO
+EOENV
+		ok "initialized $(basename "$ENV_FILE") with defaults"
+	fi
 fi
-touch "$ENV_FILE"
+if [ -f "$ROOT_DIR/.env" ]; then
+	warn "deprecated root .env present (ignored). Use config/env/.env.backend"
+fi
 MISSING=0
-require(){ local k="$1"; if ! grep -qE "^${k}=" "$ENV_FILE"; then printf '%s[warn]%s missing %s in .env\n' "$YELLOW" "$RESET" "$k"; MISSING=$((MISSING+1)); fi }
+require(){ local k="$1"; if ! grep -qE "^${k}=" "$ENV_FILE"; then printf '%s[warn]%s missing %s in $(basename "$ENV_FILE")\n' "$YELLOW" "$RESET" "$k"; MISSING=$((MISSING+1)); fi }
 require SECRET_KEY
 require BACKEND_PORT
 require FRONTEND_PORT
@@ -146,9 +172,9 @@ if ! grep -qE "^FRONTEND_DIST=" "$ENV_FILE"; then echo "FRONTEND_DIST=/apps/web/
 if ! grep -qE "^MUSIC_DIR=" "$ENV_FILE"; then echo "MUSIC_DIR=music" >> "$ENV_FILE"; fi
 if ! grep -qE "^LOG_LEVEL=" "$ENV_FILE"; then echo "LOG_LEVEL=INFO" >> "$ENV_FILE"; fi
 if [ $MISSING -gt 0 ]; then
-	warn "$MISSING required env value(s) are missing. Please edit .env before starting."
+	warn "$MISSING required env value(s) are missing. Please edit $(basename "$ENV_FILE") before starting."
 else
-	ok ".env looks good."
+	ok "$(basename "$ENV_FILE") looks good."
 fi
 
 ok "Setup complete. Use the CLI (vibrae start) or ./run.sh to start the app."

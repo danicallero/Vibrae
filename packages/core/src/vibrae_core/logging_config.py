@@ -30,11 +30,15 @@ def configure_logging(level: str | None = None, config_file: str | os.PathLike[s
         logging.basicConfig(level=getattr(logging, lvl, logging.INFO), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
         return
     text = cfg_path.read_text(encoding="utf-8").replace("__LOG_LEVEL__", lvl)
-    # Write to a temp rendered file under logs for reference
-    logs_dir = Path("logs")
-    logs_dir.mkdir(exist_ok=True)
-    rendered = logs_dir / f"rendered_logging.{os.getpid()}.ini"
-    rendered.write_text(text, encoding="utf-8")
+    # Optional debug snapshot only when VIBRAE_LOG_RENDER=1
+    if os.environ.get("VIBRAE_LOG_RENDER", "0").lower() in ("1", "true", "yes"):  # pragma: no cover - opt-in
+        logs_dir = Path("logs")
+        logs_dir.mkdir(exist_ok=True)
+        rendered = logs_dir / "rendered_logging.ini"
+        try:
+            rendered.write_text(text, encoding="utf-8")
+        except Exception:  # pragma: no cover - non-fatal
+            pass
     from io import StringIO
     logging.config.fileConfig(StringIO(text), disable_existing_loggers=False)
 

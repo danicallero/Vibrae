@@ -1,24 +1,7 @@
-###############################################
-# SOPS configuration for Vibrae secrets
-#
-# Commit this file. It defines which files are encrypted.
-# We encrypt entire *.enc files under config/env (not just select vars)
-# so additions are automatically protected.
-###############################################
-
 creation_rules:
-  - path_regex: ^config/env/.*\.enc$
-    # Encrypt whole file (omit encrypted_regex for full-file)
-    kms: []
-    gcp_kms: []
-    azure_keyvault: []
-    hc_vault: []
-    pgp: []              # Add team PGP fingerprints here when collaborating
-    age: ["age1r6wcam8zqyskpwax54xknkt5gju87fvjf2vz7ztl4xgc86760duqdf9ma8"]
-    mac_only_encrypted: true
-
-# To rotate/add recipients:
-# 1. Add new age key(s) above
-# 2. sops updatekeys config/env/.env.runtime.enc
-# 3. Commit updated encrypted file
+  - path_regex: '^config/env/\.env\.(backend|frontend|runtime)(\.enc)?$'
+    key_groups:
+      - pgp:
+          - FF46BCFF59A65BC21DA916A289FC9A82DD3ECF94  # dani's macbook
+    encrypted_regex: '.*'
 

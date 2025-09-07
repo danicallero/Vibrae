@@ -1,42 +1,49 @@
-# Vibrae (root) .gitignore
+# Vibrae .gitignore
 
-# Project data (local only)
+
+## Persistent local data (never commit user media or generated DB)
 data/
 music/
 
-# Python bytecode and virtual environments
+## Python: bytecode, envs & tooling caches
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-env/
-venv/
+/.env/
+/env/
+/venv/
+/.venv/
+.venv
 .python-version
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 
-.venv
-
-# Logs & history (keep directory but ignore contents except placeholder if desired)
+## Logs
 logs/
 logs/history/
 logs/uvicorn_logging.*.ini
 !logs/.gitkeep
 
-# Environment variables
+## Ad‑hoc root env & runtime stamp files
 .env
 .env.save
-.installed
 .env.runtime
+.env.frontend.runtime
+.installed
 
-# Encrypted env directory (plaintext & keys ignored; encrypted files committed)
-config/env/.env.runtime
-config/env/.env.runtime.save
-config/env/keys/
+## Managed environment files (backend/frontend)
+# All plaintext variants stay ignored.
+config/env/*
+!config/env/.env.*.example
+!config/env/.env.*.enc
 !config/env/.gitkeep
 
-# Frontend/Node (top-level)
+config/env/.env.backend
+config/env/.env.frontend
+
+## Node / frontend artifacts
 node_modules/
 dist/
 .expo/

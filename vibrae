@@ -1,16 +1,33 @@
 #!/bin/bash
+# formatting helpers (defined early for later use)
+hdr(){ printf "%b%s%b\n" "$BOLD" "$*" "$RESET"; }
+line(){ printf '%s\n' '--------------------------------------------------'; }
+section(){ echo; hdr "$1"; line; }
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Vibrae CLI: install, run, inspect.
 # Usage: vibrae <command> [args]
 
-set -Eeuo pipefail
+set -o pipefail
 IFS=$'\n\t'
+
+# Minimal err before color setup
+err(){ printf 'x %s\n' "$*" 1>&2; }
 
 VERSION="0.4.1"
 
-trap 'err "unexpected error (line ${LINENO})"' ERR
+trap_handler(){
+  local rc=$?; local ln=${LINENO}
+  # Skip trap until fully init
+  if [ -z "${_VIBRAE_TRAP_READY:-}" ] || [ -n "${_VIBRAE_SUPPRESS_TRAP:-}" ]; then return; fi
+  err "unexpected error (line ${ln})"; return $rc
+}
+# Trap disabled (too noisy)
+unset _VIBRAE_SUPPRESS_TRAP 2>/dev/null || true
 
-# Resolve script directory robustly even when invoked via symlink (e.g., /usr/local/bin/vibrae)
+# Enable -u later
+DEFER_SET_U=1
+
+# Resolve script path (handles symlinks)
 resolve_self(){
   local src="${BASH_SOURCE[0]}"
   while [ -h "$src" ]; do
@@ -22,21 +39,21 @@ resolve_self(){
 }
 SCRIPT_PATH="$(resolve_self)"
 ROOT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
-ENV_FILE="$ROOT_DIR/.env"
-ENV_EXAMPLE="$ROOT_DIR/.env.example"
+ENV_FILE="$ROOT_DIR/config/env/.env.backend"
+ENV_EXAMPLE="$ROOT_DIR/config/env/.env.backend.example"
 LOG_DIR="$ROOT_DIR/logs"
 
-# colors (respect NO_COLOR and non-TTY)
+# colors (respect NO_COLOR/no TTY)
 if [ -z "${NO_COLOR:-}" ] && [ -t 1 ] && command -v tput >/dev/null 2>&1 && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
-  BOLD="$(tput bold)"; RESET="$(tput sgr0)"
-  RED="$(tput setaf 1)"; GREEN="$(tput setaf 2)"; YELLOW="$(tput setaf 3)"; BLUE="$(tput setaf 4)"; GREY="$(tput setaf 8)"
+  BOLD="$(tput bold)"; RESET="$(tput sgr0)";
+  RED="$(tput setaf 1)"; GREEN="$(tput setaf 2)"; YELLOW="$(tput setaf 3)"; BLUE="$(tput setaf 4)"; GREY="$(tput setaf 8)";
 else BOLD=""; RESET=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; GREY=""; fi
 ok(){ printf "%b✔%b %s\n" "$GREEN" "$RESET" "$*"; }
 warn(){ printf "%b!%b %s\n" "$YELLOW" "$RESET" "$*"; }
 err(){ printf "%bx%b %s\n" "$RED" "$RESET" "$*" 1>&2; }
 hdr(){ printf "%b%s%b\n" "$BOLD" "$*" "$RESET"; }
 
-banner(){ printf "=== %bVibrae%b — sound, simplified ===\n" "$BOLD" "$RESET"; }
+banner(){ printf "=== %bVibrae%b ===\n" "$BOLD" "$RESET"; }
 
 license_notice(){ printf "%bVibrae%b (GPLv3, no warranty)\n" "$BOLD" "$RESET"; }
 
@@ -46,55 +63,108 @@ contact_information(){
 }
 
 usage(){
-  banner
-  cat <<EOF
-
-${BOLD}Core${RESET}
-  ${BOLD}version${RESET}              Show CLI version
-  ${BOLD}install${RESET}              Install/update dependencies (setup.sh)
+  banner; section "Core"; cat <<EOF
+  ${BOLD}version${RESET}             Show CLI version
+  ${BOLD}install${RESET}             Install/update dependencies (scripts/app/setup.sh)
   ${BOLD}start${RESET} | up          Start all services (run.sh)
   ${BOLD}stop${RESET} | down         Stop all services (stop.sh)
   ${BOLD}restart${RESET}             Stop then start
   ${BOLD}status${RESET}              Show service status (process + health)
   ${BOLD}logs${RESET} [name] [n]     Tail logs (backend|player|serve|cloudflared). Default all; n=100
-  ${BOLD}front restart${RESET}        Restart only static server
+  ${BOLD}front restart${RESET}       Restart only static server
   ${BOLD}open${RESET}                Open web UI
   ${BOLD}url${RESET}                 Print local/public URLs
-
-${BOLD}Environment & Secrets${RESET}
-  ${BOLD}env show${RESET}            Print .env
+EOF
+  section "Environment & Secrets"; cat <<EOF
+  ${BOLD}env show${RESET}            Print .env (aliases: env ls, env cat)
   ${BOLD}env edit${RESET}            Edit .env
   ${BOLD}env set${RESET} KEY=VALUE   Set or add a key
   ${BOLD}env sync${RESET}            Add any missing recommended keys
-  ${BOLD}env encrypt${RESET}         Encrypt runtime env (SOPS)
-  ${BOLD}env decrypt${RESET}         Decrypt runtime env
-  ${BOLD}env edit-sec${RESET}        Decrypt, edit, re-encrypt
-
-${BOLD}Database${RESET}
-  ${BOLD}db init${RESET}             Create tables & seed admin (if absent)
-
-${BOLD}Music Source${RESET}
+  ${BOLD}env encrypt${RESET}         Encrypt backend env (.env.backend)
+  ${BOLD}env decrypt${RESET}         Decrypt backend env
+  ${BOLD}env edit-sec${RESET}        Decrypt, edit, re-encrypt backend env
+  ${BOLD}env f-encrypt${RESET}       Encrypt frontend env (EXPO_PUBLIC_*)
+  ${BOLD}env f-decrypt${RESET}       Decrypt frontend env
+  ${BOLD}env f-edit-sec${RESET}      Decrypt, edit, re-encrypt frontend env
+  ${BOLD}env help${RESET}            Env-only help & tips
+EOF
+  section "Database"; echo "  ${BOLD}db init${RESET}             Create tables & seed admin (if absent)" 
+  section "Music Source"; cat <<EOF
   ${BOLD}source detect${RESET}       Show resolved source (folder:/path or usb:LABEL)
   ${BOLD}autostart${RESET} on|off    Toggle AUTOSTART (auto start on shell entry)
-
-${BOLD}Diagnostics${RESET}
+EOF
+  section "Diagnostics"; cat <<EOF
   ${BOLD}check-env${RESET}           Validate .env values
   ${BOLD}doctor${RESET}              Check required tools & deps
-
-${BOLD}Raspberry Pi${RESET}
+EOF
+  section "Aliases"; cat <<EOF
+  ahelp                  Show alias list
+  ver -> version         st -> status
+  ce  -> check-env       doc -> doctor
+  sh  -> shell           ls-env|env ls|env cat -> env show
+  env get KEY            Print single env value
+EOF
+  section "Raspberry Pi"; cat <<EOF
   ${BOLD}pi install${RESET}          Pi setup (systemd, nginx)
   ${BOLD}pi start|stop|status${RESET} Manage Pi services
   ${BOLD}pi logs${RESET} [unit]      Tail journal for a unit
-
-${BOLD}Misc${RESET}
+EOF
+  section "Misc"; cat <<EOF
   ${BOLD}shell${RESET}               Interactive shell
   ${BOLD}clear${RESET}               Clear the screen
+  ${BOLD}ahelp${RESET}               Show command aliases
   ${BOLD}help${RESET}                Show this help
-
 EOF
+  line;echo
 }
 
-ensure_env(){ [ -f "$ENV_FILE" ] || { echo "# Vibrae environment" > "$ENV_FILE"; }; }
+onboarding_message(){
+  echo
+  warn "Vibrae is not installed yet (missing .installed or venv)"
+  echo "Next steps:"
+  echo "  1. Run: vibrae install   # installs deps"
+  echo "  2. Edit env: vibrae env edit (or sync)"
+  echo "  3. Init DB: vibrae db init"
+  echo "  4. Start: vibrae start"
+  echo ""; echo "Shortcuts:"
+  echo "  vibrae install && vibrae db init && vibrae start" 
+  echo
+}
+
+ensure_env(){
+  # No auto migration of root .env.
+  if [ -f "$ROOT_DIR/.env" ]; then
+    warn "root .env is ignored; run 'vibrae env migrate' for legacy rename if desired"
+  fi
+  # Encrypted env present, skip creating placeholder.
+  if [ ! -f "$ENV_FILE" ] && [ -f "${ENV_FILE}.enc" ]; then
+    warn "found encrypted backend env ($(basename "${ENV_FILE}.enc")) but no plaintext; decrypt with: vibrae env decrypt"
+    return 0
+  fi
+  if [ ! -f "$ENV_FILE" ]; then
+    mkdir -p "$(dirname "$ENV_FILE")" 2>/dev/null || true
+    if [ -f "$ENV_EXAMPLE" ]; then
+      cp "$ENV_EXAMPLE" "$ENV_FILE"
+      ok "created $(basename "$ENV_FILE") from example"
+    else
+      cat > "$ENV_FILE" <<'EOENV'
+# Vibrae environment
+BACKEND_PORT=8000
+BACKEND_MODULE=apps.api.src.vibrae_api.main:app
+FRONTEND_PORT=9081
+FRONTEND_DIST=/apps/web/dist
+MUSIC_MODE=folder
+MUSIC_DIR=music
+SECRET_KEY=change-me-please
+LOG_LEVEL=INFO
+EOENV
+      ok "initialized $(basename "$ENV_FILE") with defaults"
+    fi
+  fi
+  if ! grep -qE '^[A-Z0-9_]+=.*' "$ENV_FILE"; then
+    warn "env file has no KEY= entries; add variables or run 'vibrae env sync'"
+  fi
+}
 
 run_script(){
   local script="$1"
@@ -129,7 +199,10 @@ kv_get(){ local key="$1"; [ -f "$ENV_FILE" ] || return 1; grep -E "^${key}=" "$E
 
 # helpers
 truthy(){ case "$(echo "$1" | tr '[:upper:]' '[:lower:]')" in true|1|yes|on) return 0;; *) return 1;; esac }
-is_uvicorn_running(){ pgrep -f "uvicorn" >/dev/null 2>&1; }
+is_uvicorn_running(){
+  # Avoid triggering ERR trap when uvicorn is not running (pgrep exit 1 is expected)
+  pgrep -f "uvicorn" >/dev/null 2>&1 || return 1
+}
 
 autostart_maybe_start(){
   ensure_env
@@ -139,7 +212,7 @@ autostart_maybe_start(){
       ok "AUTOSTART on; already running"
     else
       if [ ! -f "$ROOT_DIR/.installed" ] || [ ! -d "$ROOT_DIR/venv" ]; then
-        warn "AUTOSTART on but setup not completed; run ./setup.sh first"
+  warn "AUTOSTART on but setup not completed; run scripts/app/setup.sh first"
       else
         warn "AUTOSTART on; starting services"
         cmd_start
@@ -150,17 +223,17 @@ autostart_maybe_start(){
   return 1
 }
 
-cmd_install(){ run_script setup.sh; }
+cmd_install(){ run_script scripts/app/setup.sh; }
 cmd_start(){
   # Require install stamp and venv
-  if [ ! -f "$ROOT_DIR/.installed" ]; then err "setup has not been run. Run: ./setup.sh or 'vibrae install'"; return 1; fi
-  if [ ! -d "$ROOT_DIR/venv" ]; then err "missing venv. Run: ./setup.sh"; return 1; fi
+  if [ ! -f "$ROOT_DIR/.installed" ]; then err "setup has not been run. Run: scripts/app/setup.sh or 'vibrae install'"; return 1; fi
+  if [ ! -d "$ROOT_DIR/venv" ]; then err "missing venv. Run: scripts/app/setup.sh"; return 1; fi
   run_script run.sh;
 }
 cmd_stop(){ run_script stop.sh; }
 cmd_restart(){
-  if [ ! -f "$ROOT_DIR/.installed" ]; then err "setup has not been run. Run: ./setup.sh or 'vibrae install'"; return 1; fi
-  if [ ! -d "$ROOT_DIR/venv" ]; then err "missing venv. Run: ./setup.sh"; return 1; fi
+  if [ ! -f "$ROOT_DIR/.installed" ]; then err "setup has not been run. Run: scripts/app/setup.sh or 'vibrae install'"; return 1; fi
+  if [ ! -d "$ROOT_DIR/venv" ]; then err "missing venv. Run: scripts/app/setup.sh"; return 1; fi
   license_notice; cmd_stop || true; cmd_start;
 }
 
@@ -175,7 +248,7 @@ service_row(){
 cmd_status(){
   banner
   local psout; psout="$(/bin/ps aux || ps -ef || true)"
-  hdr "Services"; service_row "uvicorn" "uvicorn" "$psout"; service_row "static-serve" "(serve -s|npx serve)" "$psout"; service_row "cloudflared" "cloudflared" "$psout"
+  section "Services"; service_row "uvicorn" "uvicorn" "$psout"; service_row "static-serve" "(serve -s|npx serve)" "$psout"; service_row "cloudflared" "cloudflared" "$psout"
   # Frontend mode detection
   local mode="backend"
   if echo "$psout" | grep -E "(serve -s|npx serve)" >/dev/null; then mode="npx"; fi
@@ -262,18 +335,115 @@ cmd_env_set(){
   local key="${kv%%=*}"; local val="${kv#*=}"; kv_set "$key" "$val"; ok "$key set"
 }
 
+env_help(){
+  cat <<EOE
+Environment
+  env show|ls|cat   Print backend env (.env.backend)
+  env edit          Edit backend env
+  env set K=V       Set/add a key
+  env get KEY       Print one value
+  env sync          Add missing recommended keys
+  env encrypt       Encrypt backend env (.env.backend -> .env.backend.enc)
+  env decrypt       Decrypt backend env
+  env edit-sec      Decrypt, edit, re-encrypt backend env
+  env f-encrypt     Encrypt frontend env
+  env f-decrypt     Decrypt frontend env
+  env f-edit-sec    Decrypt, edit, re-encrypt frontend env
+
+Notes
+  - Files: config/env/.env.backend(.enc), .env.frontend(.enc)
+  - If only .enc exists, decrypt before check-env
+  - Never commit plaintext secrets
+EOE
+}
+
+env_get(){ ensure_env; local k="$1"; [ -z "$k" ] && { err "usage: vibrae env get KEY"; return 1; }; kv_get "$k" || true; }
+
 # --- SOPS environment encryption helpers ---
 sops_check(){ if ! command -v sops >/dev/null 2>&1; then err "sops not installed (https://github.com/getsops/sops)"; return 1; fi }
 sec_dir(){ printf '%s' "$ROOT_DIR/config/env"; }
-sec_plain(){ printf '%s/.env.runtime' "$(sec_dir)"; }
-sec_enc(){ printf '%s/.env.runtime.enc' "$(sec_dir)"; }
+sec_plain(){ printf '%s' "$(sec_dir)/.env.backend"; }
+sec_enc(){ printf '%s' "$(sec_dir)/.env.backend.enc"; }
+sec_front_plain(){ printf '%s' "$(sec_dir)/.env.frontend"; }
+sec_front_enc(){ printf '%s' "$(sec_dir)/.env.frontend.enc"; }
 
-cmd_env_encrypt(){ sops_check || return 1; local plain enc; plain="$(sec_plain)"; enc="$(sec_enc)"; if [ ! -f "$plain" ]; then err "plaintext $(basename "$plain") not found"; return 1; fi; sops --encrypt "$plain" > "$enc" || return 1; shred -u "$plain" 2>/dev/null || rm -f "$plain"; ok "encrypted -> $(basename "$enc")"; }
-cmd_env_decrypt(){ sops_check || return 1; local plain enc; plain="$(sec_plain)"; enc="$(sec_enc)"; if [ ! -f "$enc" ]; then err "encrypted file missing: $(basename "$enc")"; return 1; fi; sops --decrypt "$enc" > "$plain" || return 1; ok "decrypted to $(basename "$plain") (DO NOT COMMIT)"; }
-cmd_env_edit_sec(){ sops_check || return 1; local enc plain; enc="$(sec_enc)"; plain="$(sec_plain)"; if [ ! -f "$enc" ]; then err "missing encrypted file: $(basename "$enc")"; return 1; fi; sops --decrypt "$enc" > "$plain" || return 1; ${EDITOR:-${VISUAL:-nano}} "$plain"; sops --encrypt "$plain" > "$enc" || return 1; shred -u "$plain" 2>/dev/null || rm -f "$plain"; ok "updated $(basename "$enc")"; }
+# Unified SOPS runner with parse-error guidance
+_sops_run(){ # _sops_run <encrypt|decrypt> <input> <output>
+  local mode="$1"; shift; local in="$1"; shift; local out="$1"; shift || true
+  local cmd=(sops)
+  # Prefer repo config to avoid broken global ~/.sops.yaml issues
+  if [ -f "$ROOT_DIR/.sops.yaml" ]; then
+    if [ -z "${SOPS_CONFIG:-}" ]; then cmd+=(--config "$ROOT_DIR/.sops.yaml"); fi
+  fi
+  # Temporarily suppress generic trap noise
+  local prev_suppress="${_VIBRAE_SUPPRESS_TRAP:-}"
+  _VIBRAE_SUPPRESS_TRAP=1
+  case "$mode" in
+    encrypt) "${cmd[@]}" --encrypt "$in" > "$out" 2>"$out.err" ;;
+    decrypt) "${cmd[@]}" --decrypt "$in" > "$out" 2>"$out.err" ;;
+    *) err "_sops_run: invalid mode '$mode'"; return 1;;
+  esac
+  local rc=$?
+  if [ $rc -ne 0 ]; then
+    if grep -qi 'unmarshal' "$out.err" 2>/dev/null; then
+      err "sops parse error (YAML). Likely a broken global ~/.sops.yaml. Try: mv ~/.sops.yaml ~/.sops.yaml.bak && retry, or export SOPS_CONFIG=./.sops.yaml"
+    else
+      err "sops $mode failed: $(sed -e 's/\r//g' "$out.err" | tail -n3 | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g')"
+    fi
+    rm -f "$out.err" 2>/dev/null || true
+    # Keep suppression active for this failing path
+    return 1
+  fi
+  # Success path: restore suppression state
+  if [ -n "$prev_suppress" ]; then _VIBRAE_SUPPRESS_TRAP="$prev_suppress"; else unset _VIBRAE_SUPPRESS_TRAP; fi
+  rm -f "$out.err" 2>/dev/null || true
+  return 0
+}
+
+cmd_env_encrypt(){
+  sops_check || return 1
+  local plain enc; plain="$(sec_plain)"; enc="$(sec_enc)"
+  if [ ! -f "$plain" ]; then err "plaintext backend env $(basename "$plain") not found"; return 1; fi
+  if ! grep -qE '^[A-Z0-9_]+=.*' "$plain"; then err "refusing to encrypt empty env (no KEY= lines)"; return 1; fi
+  _sops_run encrypt "$plain" "$enc" || return 1
+  # Plaintext intentionally retained (workflow requires working copy). DO NOT COMMIT.
+  ok "encrypted -> $(basename "$enc") (plaintext kept; DO NOT COMMIT)"
+}
+cmd_env_decrypt(){ sops_check || return 1; local plain enc; plain="$(sec_plain)"; enc="$(sec_enc)"; if [ ! -f "$enc" ]; then err "encrypted backend file missing: $(basename "$enc")"; return 1; fi; _sops_run decrypt "$enc" "$plain" || return 1; ok "decrypted to $(basename "$plain") (DO NOT COMMIT)"; }
+cmd_env_edit_sec(){
+  # Decrypt -> edit -> re-encrypt, but retain updated plaintext (.env.backend)
+  sops_check || return 1
+  local enc plain; enc="$(sec_enc)"; plain="$(sec_plain)"
+  if [ ! -f "$enc" ]; then err "missing encrypted backend file: $(basename "$enc")"; return 1; fi
+  _sops_run decrypt "$enc" "$plain" || return 1
+  ${EDITOR:-${VISUAL:-nano}} "$plain"
+  _sops_run encrypt "$plain" "$enc" || return 1
+  # DO NOT delete plaintext (intentional change from previous behavior)
+  ok "updated $(basename "$enc") (plaintext retained; DO NOT COMMIT)"
+}
+cmd_env_f_encrypt(){
+  sops_check || return 1
+  local plain enc; plain="$(sec_front_plain)"; enc="$(sec_front_enc)"
+  if [ ! -f "$plain" ]; then err "plaintext $(basename "$plain") not found"; return 1; fi
+  _sops_run encrypt "$plain" "$enc" || return 1
+  # Keep plaintext for active development; remind user not to commit.
+  ok "encrypted -> $(basename "$enc") (plaintext kept; DO NOT COMMIT)"
+}
+cmd_env_f_decrypt(){ sops_check || return 1; local plain enc; plain="$(sec_front_plain)"; enc="$(sec_front_enc)"; if [ ! -f "$enc" ]; then err "encrypted file missing: $(basename "$enc")"; return 1; fi; _sops_run decrypt "$enc" "$plain" || return 1; ok "decrypted to $(basename "$plain") (DO NOT COMMIT)"; }
+cmd_env_f_edit_sec(){
+  # Frontend decrypt -> edit -> re-encrypt; retain plaintext (.env.frontend).
+  # Warn users not to commit the plaintext file.
+  sops_check || return 1
+  local enc plain; enc="$(sec_front_enc)"; plain="$(sec_front_plain)"
+  if [ ! -f "$enc" ]; then err "missing encrypted file: $(basename "$enc")"; return 1; fi
+  _sops_run decrypt "$enc" "$plain" || return 1
+  ${EDITOR:-${VISUAL:-nano}} "$plain"
+  _sops_run encrypt "$plain" "$enc" || return 1
+  ok "updated $(basename "$enc") (plaintext retained; DO NOT COMMIT)"
+}
 
 cmd_db_init(){
-  if [ ! -f "$ROOT_DIR/.installed" ]; then err "setup not run (./setup.sh)"; return 1; fi
+  if [ ! -f "$ROOT_DIR/.installed" ]; then err "setup not run (scripts/app/setup.sh)"; return 1; fi
   if [ ! -d "$ROOT_DIR/venv" ]; then err "missing venv"; return 1; fi
   (cd "$ROOT_DIR" && PYTHONPATH="$ROOT_DIR:$(pwd)/packages/core/src" "$ROOT_DIR/venv/bin/python" -m vibrae_core.init_db)
   ok "database initialized"
@@ -331,24 +501,48 @@ cmd_source_detect(){
 cmd_check_env(){
   banner
   ensure_env
+  # Encrypted env awareness / freshness check
+  local ENC_FILE="${ENV_FILE}.enc"
+  if [ -f "$ENC_FILE" ]; then
+    if [ ! -f "$ENV_FILE" ]; then
+      # ensure_env would have already warned and skipped creation; exit early
+      warn "cannot validate keys until you decrypt the backend env"
+      echo "Run: vibrae env decrypt"
+      return 2
+    fi
+    if [ "$ENC_FILE" -nt "$ENV_FILE" ]; then
+      warn "encrypted backend env is newer than plaintext; run: vibrae env decrypt"
+    else
+      ok "encrypted backend env detected (plaintext appears current)"
+    fi
+  fi
   local issues=0
-  check(){ local k="$1"; local msg="$2"; local v; v="$(kv_get "$k")"; if [ -z "$v" ]; then issues=$((issues+1)); printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "$k" "$msg"; fi }
+  _VIBRAE_SUPPRESS_TRAP=1
+  check(){
+    local k="$1"; local msg="$2"; local v
+    v="$(kv_get "$k" || true)"
+    if [ -z "${v}" ]; then
+      issues=$((issues+1))
+      printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "$k" "$msg"
+    fi
+  }
   check SECRET_KEY "JWT signing secret is required"
   check BACKEND_PORT "defaults to 8000 if unset"
   check FRONTEND_PORT "defaults to 9081 if unset"
   check FRONTEND_DIST "path to exported web (default /apps/web/dist)"
   # Music/source
-  local mode; mode="$(kv_get MUSIC_MODE)"; [ -z "$mode" ] && mode="$(kv_get MUSIC_SOURCE_MODE)"
+  local mode; mode="$(kv_get MUSIC_MODE || true)"; [ -z "$mode" ] && mode="$(kv_get MUSIC_SOURCE_MODE || true)"
   if [ -z "$mode" ]; then printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "MUSIC_MODE" "folder|usb (default folder)"; issues=$((issues+1)); fi
   if [ "$mode" = "usb" ]; then
-    local label; label="$(kv_get USB_VOLUME_LABEL)"; [ -z "$label" ] && label="$(kv_get VIBRAE_MUSIC)"
+    local label; label="$(kv_get USB_VOLUME_LABEL || true)"; [ -z "$label" ] && label="$(kv_get VIBRAE_MUSIC || true)"
     [ -z "$label" ] && printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "VIBRAE_MUSIC" "USB volume label or absolute mount path"
   fi
   # Tunneling
-  local tunnel; tunnel="$(kv_get TUNNEL)"; [ -z "$tunnel" ] && tunnel="cloudflared"
+  local tunnel; tunnel="$(kv_get TUNNEL || true)"; [ -z "$tunnel" ] && tunnel="cloudflared"
   if [ "$tunnel" = "cloudflared" ]; then
-    local tok; tok="$(kv_get CLOUDFLARE_TUNNEL_TOKEN)"; [ -z "$tok" ] && printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "CLOUDFLARE_TUNNEL_TOKEN" "required when TUNNEL=cloudflared"
+    local tok; tok="$(kv_get CLOUDFLARE_TUNNEL_TOKEN || true)"; [ -z "$tok" ] && printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "CLOUDFLARE_TUNNEL_TOKEN" "required when TUNNEL=cloudflared"
   fi
+  unset _VIBRAE_SUPPRESS_TRAP
   [ $issues -eq 0 ] && ok "env looks good" || warn "$issues item(s) to review"
 }
 
@@ -390,9 +584,10 @@ except Exception:
   pass
 PY
   else
-  warn "venv not found; run ./setup.sh"
+  warn "venv not found; run scripts/app/setup.sh"
   fi
 }
+
 
 # --- Raspberry Pi helpers ---
 is_pi(){ [ -f /etc/raspberrypi-release ] || grep -qi 'raspberry' /proc/cpuinfo 2>/dev/null || grep -qi 'raspi' /proc/cpuinfo 2>/dev/null; }
@@ -441,6 +636,14 @@ dispatch(){
   # With 'set -u', $1 may be unset when no args are passed; default to empty
   case "${1-}" in
   --version|version) shift; echo "vibrae ${VERSION}"; return 0;;
+    "" )
+      # No command provided
+      if [ ! -f "$ROOT_DIR/.installed" ] || [ ! -d "$ROOT_DIR/venv" ]; then
+        onboarding_message
+        return 0
+      else
+        run_interactive; return 0
+      fi;;
     install) shift; cmd_install "$@";;
     start|up) shift; cmd_start "$@";;
     stop|down) shift; cmd_stop "$@";;
@@ -454,24 +657,42 @@ dispatch(){
     contact) shift; contact_information "$@";;
     github) shift; cmd_github "$@";;
 
-  env) shift; case "${1-}" in show) shift; cmd_env_show;; edit) shift; cmd_env_edit;; encrypt) shift; cmd_env_encrypt;; decrypt) shift; cmd_env_decrypt;; edit-sec) shift; cmd_env_edit_sec;; set) shift; cmd_env_set "$@";; sync) shift; cmd_env_sync;; *) usage; return 1;; esac;;
+  env) shift; case "${1-}" in show|ls|cat) shift; cmd_env_show;; edit) shift; cmd_env_edit;; encrypt) shift; cmd_env_encrypt;; decrypt) shift; cmd_env_decrypt;; edit-sec) shift; cmd_env_edit_sec;; f-encrypt) shift; cmd_env_f_encrypt;; f-decrypt) shift; cmd_env_f_decrypt;; f-edit-sec) shift; cmd_env_f_edit_sec;; set) shift; cmd_env_set "$@";; get) shift; env_get "$@";; sync) shift; cmd_env_sync;; help) shift; env_help;; *) usage; return 1;; esac;;
 
   db) shift; case "${1-}" in init) shift; cmd_db_init ;; *) usage; return 1;; esac;;
 
     autostart) shift; cmd_autostart "$@";;
     source) shift; case "$1" in detect) shift; cmd_source_detect;; *) usage; return 1;; esac;;
 
-    check-env) shift; cmd_check_env;;
-  check) shift; cmd_check_env;;
+  check-env|ce|check) shift; cmd_check_env;;
     doctor) shift; cmd_doctor;;
   clear) clear 2>/dev/null || printf '\033c';;
   pi) shift; case "${1-}" in install) shift; cmd_pi_install;; start) shift; cmd_pi_start;; stop) shift; cmd_pi_stop;; status) shift; cmd_pi_status;; logs) shift; cmd_pi_logs "$@";; *) usage; return 1;; esac;;
-    help|--help|-h) usage;;
+  ahelp) echo "Aliases:"; echo "  ver->version st->status ce->check-env doc->doctor"; echo "  sh->shell ls-env/env ls/env cat->env show"; echo "  up->start down->stop"; echo "  ahelp->this list";;
+  ver) shift; echo "vibrae ${VERSION}";;
+  st) shift; cmd_status "$@";;
+  ce) shift; cmd_check_env;;
+  doc) shift; cmd_doctor;;
+  sh) shift; run_interactive;;
+  ls-env) shift; cmd_env_show;;
+  up) shift; cmd_start "$@";;
+  down) shift; cmd_stop "$@";;
+  help|--help|-h) usage;;
     shell|"") run_interactive;;
     *) err "Unknown command: $1"; usage; return 1;;
   esac
 }
 
-main(){ dispatch "$@"; }
+main(){
+  _VIBRAE_TRAP_READY=1; export _VIBRAE_TRAP_READY;
+  unset _VIBRAE_SUPPRESS_TRAP 2>/dev/null || true
+  dispatch "$@";
+}
+
+# Enable -u late to avoid early false ERR triggers
+if [ -n "${DEFER_SET_U:-}" ]; then
+  set -u
+  unset DEFER_SET_U
+fi
 
 main "$@"

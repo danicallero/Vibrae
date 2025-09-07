@@ -11,7 +11,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Install syft
-        uses: anchore/sbom-action/download-syft@v0.17.9
+        uses: anchore/sbom-action/download-syft@v0.20.5
       - name: Generate SBOM (repo)
         run: syft dir:. -o cyclonedx-json > sbom-repo.cdx.json
       - name: Upload artifact

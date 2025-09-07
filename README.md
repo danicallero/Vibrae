@@ -47,7 +47,7 @@
 - Easy deployment with unified scripts or Docker Compose
 - Optional secure access via Tailscale VPN
 - Reverse proxy via nginx (Cloudflare Tunnel or VPN handles HTTPS)
-- Encrypted environment files (SOPS + Age)
+- Encrypted environment files (SOPS + PGP)
 - Customizable playlists, scenes, schedules
 - Control from any device
 - Open-source, portable configuration
@@ -150,14 +150,14 @@ vibrae stop    # stop stack (prints license notice)
 vibrae restart # stop + start
 ```
 
-Scripts:
+Scripts (direct):
 
 ```bash
-./run.sh
-./stop.sh
+scripts/app/run.sh
+scripts/app/stop.sh
 ```
 
-Both start backend API, static server (npx serve if export exists), nginx reverse proxy, and optional Cloudflare Tunnel.
+These start backend API, static server (npx serve if export exists), nginx reverse proxy, and optional Cloudflare Tunnel.
 
 ### 6. Access the app
 
@@ -178,7 +178,7 @@ Alternatively, you can run `./stop.sh`.
 - **Environment Variables**: Managed via root `.env` (plus optional encrypted runtime file). See `.env.example`.
 - **nginx**: Reverse proxy for API, WebSocket, static assets.
 - **Cloudflare Tunnel**: HTTPS public access; token required when enabled.
-- **Scripts**: `run.sh` / `stop.sh` wrapper over `scripts/app/*.sh` for portability.
+- **Scripts**: `scripts/app/run.sh` / `scripts/app/stop.sh` (invoked by CLI helpers when available).
 - **Frontend**: Expo (web export) served via npx or nginx.
 - **Backend**: FastAPI / Uvicorn + SQLite (file DB) using SQLAlchemy.
 - **Logging**: Separate `backend.log` and `player.log` via `config/logging.ini` (player & scheduler isolated).
@@ -187,9 +187,20 @@ Alternatively, you can run `./stop.sh`.
 
 ## Environment Variables
 
-This project uses two .env files:
+Layered sources (lowest precedence first):
 
-1) Root `.env` (consumed by scripts + backend):
+1. Root `.env` – baseline, non‑secret defaults (shared by scripts & backend).
+2. Backend plaintext `config/env/.env.backend` (if present) – working copy of backend secrets (NOT committed).
+3. Frontend plaintext `config/env/.env.frontend` (if present) – working copy of build‑time public values (`EXPO_PUBLIC_*`, NOT committed).
+4. Encrypted backend `config/env/.env.backend.enc` – committed; decrypts over (2) when changed.
+5. Encrypted frontend `config/env/.env.frontend.enc` – committed; decrypts over (3) when changed.
+6. Live shell exports – highest precedence for ad‑hoc overrides.
+
+Legacy names (`.env.runtime*`, `.env.frontend.runtime*`) are still READ as a fallback (backend only) with a warning so you can migrate, but new writes/encrypt operations ONLY use `backend` / `frontend` names.
+
+`run.sh` sourcing order now: `.env` → `.env.backend` (or legacy runtime fallback with warning) → `.env.frontend` (no legacy fallback; migrate if still using the old name).
+
+### Root `.env` keys:
 
 - DOMAIN: your public domain (e.g. garden.example.com)
 - FRONTEND_PORT: static server port (default: 9081)
@@ -209,47 +220,71 @@ Notes:
 - Periodic rotation loop handles: backend.log, player.log, serve.log, cloudflared.log.
 - Separate log handlers ensure player/scheduler noise doesn't flood API logs.
 
-### Encrypted Runtime Env (SOPS + Age)
+### Secret Management (SOPS + PGP)
 
-Instead of committing a plain `.env.runtime`, the repository stores `.env.runtime.enc` encrypted under `config/env/`.
+Encryption uses SOPS + PGP key groups (`.sops.yaml`). Policy:
 
-CLI helpers (see also `vibrae help`):
+Track only:
+- Templates: `config/env/.env.*.example`
+- Encrypted secrets: `config/env/.env.*.enc`
 
+Keep (git‑ignored, local only):
+- Plaintext working copies: `config/env/.env.backend`, `config/env/.env.frontend`
+
+Commands now RETAIN plaintext after encrypt / edit cycles (no auto shred). This supports iterative local edits without repeated decrypt steps. You must manually ensure you do not commit plaintext files (gitignore already blocks them).
+
+Legacy names still warn: `.env.runtime*`, `.env.frontend.runtime*`.
+
+#### One‑time PGP setup
+Import the provided public keys (each machine):
 ```bash
-./vibrae env encrypt     # encrypt .env.runtime -> .env.runtime.enc
-./vibrae env decrypt     # decrypt to stdout (never writes plaintext by default)
-./vibrae env edit-sec    # open secure editor; auto re-encrypt when you exit
+gpg --import path/to/public_key_1.asc
+gpg --import path/to/public_key_2.asc
+```
+Confirm fingerprints match those in `.sops.yaml`.
+
+#### Migrating old runtime files
+If you previously used `*.runtime*` names:
+```bash
+./vibrae env migrate
+```
+This renames & re-encrypts to backend/frontend naming (idempotent).
+
+#### Backend secret workflow
+```bash
+cp config/env/.env.backend.example config/env/.env.backend   # scaffold (or run 'vibrae env sync')
+./vibrae env encrypt                                         # produces .env.backend.enc (keeps plaintext)
+./vibrae env edit-sec                                        # decrypts (if needed), opens editor, re-encrypts (keeps plaintext)
+```
+Plaintext retained: use `git add -p` or `git status` to verify it is NOT staged.
+
+#### Frontend secret workflow
+```bash
+cp config/env/.env.frontend.example config/env/.env.frontend || true
+echo "EXPO_PUBLIC_API_URL=https://YOUR_DOMAIN" >> config/env/.env.frontend
+./vibrae env f-encrypt          # keeps plaintext
+./vibrae env f-edit-sec         # re-encrypt after edit (plaintext kept)
 ```
 
-Key material lives under `config/env/keys`. Age recipients are defined in `.sops.yaml`.
-
-Typical workflow:
-1. Copy `.env.example` to `.env.runtime` and edit values.
-2. `./vibrae env encrypt` (produces `.env.runtime.enc` committed to git).
-3. Delete or ignore the plaintext file locally if desired.
-4. On another machine: `./vibrae env decrypt > .env.runtime` then `./run.sh`.
-
-Quick commands:
+#### Decrypt (read‑only to stdout or refresh plaintext)
 ```bash
-make secrets-decrypt        # decrypt to .env.runtime
-./vibrae env edit-sec       # safe edit (decrypt -> edit -> re-encrypt)
-./vibrae env encrypt        # encrypt & remove plaintext
+./vibrae env decrypt      # backend
+./vibrae env f-decrypt    # frontend
 ```
 
-Optional: enable protective pre-commit hook (blocks committing plaintext secrets):
-```bash
-git config core.hooksPath .githooks
-```
+If plaintext already exists it will just be overwritten with current decrypted content.
 
-2) Frontend `apps/web/.env` (build-time):
+#### Safety / CI notes
+- Never commit plaintext `config/env/.env.*` files (gitignore blocks them; verify before pushing).
+- Commit: `.env.*.example` + `.env.*.enc` only.
+- CI/CD: import GPG private key(s), run decrypt to materialize working plaintext before invoking `run.sh` / tests.
+- Optional hygiene step (manual): `shred -u config/env/.env.backend config/env/.env.frontend 2>/dev/null || rm -f ...` BEFORE screen sharing or support dumps.
 
-- API_URL: Base URL for the API. Examples:
-	- For production behind nginx: https://YOUR_DOMAIN/api
-	- For local with nginx: http://localhost/api
-	- For direct dev (bypassing nginx): http://localhost:8000
+Future enhancement (planned): `vibrae env scrub` to securely remove any plaintext envs prior to publishing artifacts.
 
-Tips:
-- After changing `apps/web/.env`, rebuild the web app (export) so the static files include the new value.
+#### run.sh sourcing summary
+Order: `.env` → `.env.backend` (warn & fallback: `.env.runtime`) → `.env.frontend`.
+Frontend legacy name is NOT sourced automatically; migrate if you still rely on it.
 
 ---
 
@@ -307,6 +342,108 @@ Misc: `shell`, `clear`, `version`, `help`
 
 Inside interactive shell: `help`, `status`, `logs`, etc. AUTOSTART (if true) triggers service start upon entering shell.
 
+### Quick Cheat Sheet
+
+| Task | Command |
+|------|---------|
+| Install deps / venv | `vibrae install` |
+| Start / Stop / Restart | `vibrae start` / `vibrae stop` / `vibrae restart` |
+| Show status & health | `vibrae status` |
+| Tail logs (all / one) | `vibrae logs` / `vibrae logs backend 200` |
+| Open web UI | `vibrae open` |
+| Print URLs | `vibrae url` |
+| Sync missing env keys | `vibrae env sync` |
+| Show / edit backend env | `vibrae env show` / `vibrae env edit` |
+| Set one key | `vibrae env set KEY=VALUE` |
+| Encrypt backend / frontend | `vibrae env encrypt` / `vibrae env f-encrypt` |
+| Secure edit backend / frontend | `vibrae env edit-sec` / `vibrae env f-edit-sec` |
+| Decrypt (materialize/update) | `vibrae env decrypt` / `vibrae env f-decrypt` |
+| Detect music source | `vibrae source detect` |
+| Toggle autostart | `vibrae autostart on|off` |
+| Initialize database | `vibrae db init` |
+| Environment validation | `vibrae check-env` (alias: `ce`) |
+| Dependency doctor | `vibrae doctor` (alias: `doc`) |
+| Raspberry Pi service logs | `vibrae pi logs` |
+| Interactive shell | `vibrae shell` (alias: `sh`) |
+
+Aliases: `ver`→version, `st`→status, `ce`→check-env, `doc`→doctor, `up`→start, `down`→stop, `ls-env`→env show.
+
+### Typical First Run Flow
+```bash
+vibrae install
+vibrae env sync          # ensure recommended keys
+vibrae env edit          # set SECRET_KEY, DOMAIN, etc.
+vibrae env encrypt       # create .env.backend.enc (plaintext kept)
+vibrae db init           # create tables / seed admin
+vibrae start             # launch stack
+vibrae status            # confirm health
+```
+
+### Secure Edit vs Plain Edit
+`env edit` edits existing plaintext directly (fails if missing). `env edit-sec` always performs decrypt → edit → re-encrypt, ensuring `.enc` stays current. Both now keep plaintext; use `git status` before committing.
+
+### PGP Key Management (SOPS)
+` .sops.yaml` lists recipient fingerprints. To grant a new collaborator access:
+1. Add their public key (they send you: `gpg --armor --export <FPR>`).
+2. Append their fingerprint under the appropriate SOPS `pgp` recipients in `.sops.yaml`.
+3. Re-encrypt each env: `vibrae env encrypt && vibrae env f-encrypt`.
+4. Commit updated `.sops.yaml` + `*.enc`.
+
+Rotate / revoke access (lost key or teammate leaves):
+1. Remove old fingerprint from `.sops.yaml`.
+2. Import replacement/new key(s).
+3. Re-encrypt both backend & frontend envs.
+4. Commit new encrypted blobs.
+
+List local keys:
+```bash
+gpg --list-keys
+```
+Show fingerprints only:
+```bash
+gpg --list-keys --fingerprint | grep -E '^[ ]+[0-9A-F]{40}$'
+```
+
+Test decryption without writing plaintext:
+```bash
+sops --decrypt config/env/.env.backend.enc >/dev/null
+```
+
+### Adding a New Secret
+Backend (plaintext present):
+```bash
+vibrae env set NEW_KEY=value
+vibrae env encrypt
+```
+Frontend:
+```bash
+echo "EXPO_PUBLIC_FEATURE_FLAG=1" >> config/env/.env.frontend
+vibrae env f-encrypt
+```
+
+### CI/CD Secrets Flow Example
+Pseudo GitHub Actions step (conceptual):
+```yaml
+- name: Import GPG private key
+	run: |
+		echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+		echo "$GPG_OWNERTRUST" | gpg --batch --import-ownertrust || true
+- name: Decrypt env
+	run: |
+		./vibrae env decrypt
+		./vibrae env f-decrypt || true
+- name: Start services (test mode)
+	run: |
+		vibrae db init
+		vibrae start
+		# run integration tests here
+```
+
+If you want to avoid persisting plaintext post‑pipeline, delete them at end:
+```bash
+rm -f config/env/.env.backend config/env/.env.frontend
+```
+
 ## Screenshots
 
 
@@ -357,46 +494,8 @@ Keep such runs separate; unit tests should remain fast and silent by default.
 
 This project is licensed under the GNU GPLv3. See `LICENSE` for full terms.
 
-Note: Prior releases may have referenced MIT; as of this change, the codebase is distributed under GPLv3 going forward.
-
 <div align="center">
 Made with ❤️, Python, React Native, and Expo by <b>Dani Callero</b>
 </div>
 
 ---
-
-### Imports
-Primary application entrypoint:
-
-```
-apps.api.src.vibrae_api.main:app
-```
-
-Player usage:
-
-```python
-from vibrae_core.player import Player
-```
-
-### Editor import warnings (vibrae_core)
-If your editor shows `Import "vibrae_core.*" could not be resolved`, add `packages/core/src` (and `apps/api/src`) to the Python path.
-
-VS Code `.vscode/settings.json` example:
-```json
-{
-	"python.analysis.extraPaths": [
-		"packages/core/src",
-		"apps/api/src"
-	]
-}
-```
-
-Temporary shell session:
-```bash
-export PYTHONPATH=packages/core/src:apps/api/src:$PYTHONPATH
-```
-
-Editable install (recommended for contributors):
-```bash
-pip install -e .[dev]
-```

@@ -1,28 +1,8 @@
-# models.py
-# SPDX-License-Identifier: GPL-3.0-or-later
+"""Shim forwarding to core models (vibrae_core.models).
 
-from sqlalchemy import Column, Integer, String, ForeignKey, Time
-from sqlalchemy.orm import relationship
-from backend.db import Base
-
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True)
-    username = Column(String, unique=True, index=True)
-    password_hash = Column(String)
-
-class Scene(Base):
-    __tablename__ = "scenes"
-    id = Column(Integer, primary_key=True)
-    name = Column(String, unique=True)
-    path = Column(String)
-
-class Routine(Base):
-    __tablename__ = "routines"
-    id = Column(Integer, primary_key=True)
-    scene_id = Column(Integer, ForeignKey("scenes.id"))
-    start_time = Column(String) # e.g. "08:00"
-    end_time = Column(String)
-    weekdays = Column(String)   # e.g. "mon,tue,wed"
-    months = Column(String)     # e.g "jan,feb,mar,apr"
-    volume = Column(Integer)
+Deprecated: import from `vibrae_core.models` instead of `backend.models`.
+Will be removed in a future release.
+"""
+import warnings as _warnings
+_warnings.warn("backend.models is deprecated; use vibrae_core.models", DeprecationWarning, stacklevel=2)
+from vibrae_core.models import *  # type: ignore  # noqa: F401,F403

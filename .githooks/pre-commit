@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Prevent committing plaintext secrets or private age keys.
+set -euo pipefail
+
+# Files that must never be committed
+BLOCK_PATTERNS=(
+  'config/env/.env.runtime'
+  '.env.runtime'
+  'config/env/keys'
+)
+
+# Age private key common paths
+KEY_HINTS=( 'AGE-SECRET-KEY-' )
+
+staged=$(git diff --cached --name-only)
+
+fail=0
+for f in $staged; do
+  for pat in "${BLOCK_PATTERNS[@]}"; do
+    if [[ "$f" == "$pat" || "$f" == $pat/* ]]; then
+      echo "[pre-commit] Blocked: $f (plaintext secret)" >&2
+      fail=1
+    fi
+  done
+  if [[ -f "$f" ]]; then
+    if grep -qE 'AGE-SECRET-KEY-' "$f" 2>/dev/null; then
+      echo "[pre-commit] Blocked: $f appears to contain an Age private key" >&2
+      fail=1
+    fi
+  fi
+  if [[ "$f" == *.enc ]]; then
+    # sanity: ensure sops metadata present to confirm encryption
+    if ! grep -q 'sops:' "$f" 2>/dev/null; then
+      echo "[pre-commit] Warning: $f has .enc extension but missing sops metadata" >&2
+    fi
+  fi
+done
+
+if [[ $fail -eq 1 ]]; then
+  echo "Commit aborted. Remove plaintext or encrypt first (./vibrae env encrypt)." >&2
+  exit 1
+fi
+
+exit 0

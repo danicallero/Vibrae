@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  pull-requests: write
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest ruff
+
+      - name: Lint (ruff)
+        run: |
+          ruff check packages/core/src apps/api/src || true
+
+      - name: Secret scan (plaintext env guard)
+        run: |
+          set -e
+          if git ls-files | grep -q '^config/env/.env.runtime$'; then
+            echo "Plaintext config/env/.env.runtime is tracked!" >&2; exit 1; fi
+          if git ls-files | grep -q '^.env.runtime$'; then
+            echo "Plaintext .env.runtime at repo root is tracked!" >&2; exit 1; fi
+          echo "[ok] No tracked plaintext runtime env files."
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Upload coverage placeholder
+        if: always()
+        run: echo "Add coverage tooling later" 

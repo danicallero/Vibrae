@@ -1,0 +1,41 @@
+[project]
+name = "vibrae-core"
+version = "0.1.0"
+description = "Core domain (auth, db, models, player, scheduler) for Vibrae"
+authors = [ { name = "Vibrae" } ]
+requires-python = ">=3.11"
+dependencies = [
+  "sqlalchemy",
+  "pydantic",
+  "passlib[bcrypt]",
+  "python-jose[cryptography]",
+  "python-dotenv",
+  "python-vlc",
+]
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+[project]
+name = "vibrae-core"
+version = "0.1.0"
+description = "Core domain, scheduling, playback services for Vibrae"
+license = { text = "GPL-3.0-or-later" }
+authors = [ { name = "Dani Callero" } ]
+requires-python = ">=3.11"
+readme = "../../README.md"
+dependencies = [
+  "sqlalchemy",
+  "pydantic",
+]
+
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

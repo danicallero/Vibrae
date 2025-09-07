@@ -1,0 +1,21 @@
+name: SBOM
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  generate-sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0.17.9
+      - name: Generate SBOM (repo)
+        run: syft dir:. -o cyclonedx-json > sbom-repo.cdx.json
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-repo
+          path: sbom-repo.cdx.json

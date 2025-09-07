@@ -49,35 +49,48 @@ usage(){
   banner
   cat <<EOF
 
-${BOLD}Commands${RESET}
+${BOLD}Core${RESET}
   ${BOLD}version${RESET}              Show CLI version
   ${BOLD}install${RESET}              Install/update dependencies (setup.sh)
-  ${BOLD}start${RESET} | up          Start the app (run.sh)
-  ${BOLD}stop${RESET} | down         Stop the app (stop.sh)
+  ${BOLD}start${RESET} | up          Start all services (run.sh)
+  ${BOLD}stop${RESET} | down         Stop all services (stop.sh)
   ${BOLD}restart${RESET}             Stop then start
-  ${BOLD}status${RESET}              Show service status
+  ${BOLD}status${RESET}              Show service status (process + health)
   ${BOLD}logs${RESET} [name] [n]     Tail logs (backend|player|serve|cloudflared). Default all; n=100
-  ${BOLD}front restart${RESET}        Restart only the static server (npx)
-  ${BOLD}open${RESET}                Open web UI in browser
+  ${BOLD}front restart${RESET}        Restart only static server
+  ${BOLD}open${RESET}                Open web UI
   ${BOLD}url${RESET}                 Print local/public URLs
 
+${BOLD}Environment & Secrets${RESET}
   ${BOLD}env show${RESET}            Print .env
-  ${BOLD}env edit${RESET}            Open .env in editor
+  ${BOLD}env edit${RESET}            Edit .env
   ${BOLD}env set${RESET} KEY=VALUE   Set or add a key
-  ${BOLD}env sync${RESET}            Add missing recommended keys
+  ${BOLD}env sync${RESET}            Add any missing recommended keys
+  ${BOLD}env encrypt${RESET}         Encrypt runtime env (SOPS)
+  ${BOLD}env decrypt${RESET}         Decrypt runtime env
+  ${BOLD}env edit-sec${RESET}        Decrypt, edit, re-encrypt
 
-  ${BOLD}autostart${RESET} on|off    Toggle AUTOSTART
+${BOLD}Database${RESET}
+  ${BOLD}db init${RESET}             Create tables & seed admin (if absent)
+
+${BOLD}Music Source${RESET}
   ${BOLD}source detect${RESET}       Show resolved source (folder:/path or usb:LABEL)
+  ${BOLD}autostart${RESET} on|off    Toggle AUTOSTART (auto start on shell entry)
 
+${BOLD}Diagnostics${RESET}
   ${BOLD}check-env${RESET}           Validate .env values
-  ${BOLD}doctor${RESET}              Check required tools
-  ${BOLD}help${RESET}                Show this help (also available inside the shell)
+  ${BOLD}doctor${RESET}              Check required tools & deps
+
+${BOLD}Raspberry Pi${RESET}
+  ${BOLD}pi install${RESET}          Pi setup (systemd, nginx)
+  ${BOLD}pi start|stop|status${RESET} Manage Pi services
+  ${BOLD}pi logs${RESET} [unit]      Tail journal for a unit
+
+${BOLD}Misc${RESET}
   ${BOLD}shell${RESET}               Interactive shell
   ${BOLD}clear${RESET}               Clear the screen
-  
-    ${BOLD}pi install${RESET}          Pi setup (systemd, nginx)
-    ${BOLD}pi start|stop|status${RESET} Pi service control
-    ${BOLD}pi logs${RESET} [unit]      Pi journal logs
+  ${BOLD}help${RESET}                Show this help
+
 EOF
 }
 
@@ -202,7 +215,7 @@ cmd_front_restart(){
   pkill -f "(serve -s|npx serve)" >/dev/null 2>&1 || true
   sleep 0.5
   # Re-run the portion from run.sh that starts npx if possible
-  FRONTEND_DIST_VAL="$(kv_get FRONTEND_DIST)"; [ -n "$FRONTEND_DIST_VAL" ] || FRONTEND_DIST_VAL="/front/dist"
+  FRONTEND_DIST_VAL="$(kv_get FRONTEND_DIST)"; [ -n "$FRONTEND_DIST_VAL" ] || FRONTEND_DIST_VAL="/apps/web/dist"
   SERVE_ROOT="$ROOT_DIR$FRONTEND_DIST_VAL"
   PORT_VAL="$(kv_get FRONTEND_PORT)"; [ -n "$PORT_VAL" ] || PORT_VAL=9081
   if command -v npx >/dev/null 2>&1 && [ -d "$SERVE_ROOT" ]; then
@@ -241,6 +254,23 @@ cmd_env_set(){
   local key="${kv%%=*}"; local val="${kv#*=}"; kv_set "$key" "$val"; ok "$key set"
 }
 
+# --- SOPS environment encryption helpers ---
+sops_check(){ if ! command -v sops >/dev/null 2>&1; then err "sops not installed (https://github.com/getsops/sops)"; return 1; fi }
+sec_dir(){ printf '%s' "$ROOT_DIR/config/env"; }
+sec_plain(){ printf '%s/.env.runtime' "$(sec_dir)"; }
+sec_enc(){ printf '%s/.env.runtime.enc' "$(sec_dir)"; }
+
+cmd_env_encrypt(){ sops_check || return 1; local plain enc; plain="$(sec_plain)"; enc="$(sec_enc)"; if [ ! -f "$plain" ]; then err "plaintext $(basename "$plain") not found"; return 1; fi; sops --encrypt "$plain" > "$enc" || return 1; shred -u "$plain" 2>/dev/null || rm -f "$plain"; ok "encrypted -> $(basename "$enc")"; }
+cmd_env_decrypt(){ sops_check || return 1; local plain enc; plain="$(sec_plain)"; enc="$(sec_enc)"; if [ ! -f "$enc" ]; then err "encrypted file missing: $(basename "$enc")"; return 1; fi; sops --decrypt "$enc" > "$plain" || return 1; ok "decrypted to $(basename "$plain") (DO NOT COMMIT)"; }
+cmd_env_edit_sec(){ sops_check || return 1; local enc plain; enc="$(sec_enc)"; plain="$(sec_plain)"; if [ ! -f "$enc" ]; then err "missing encrypted file: $(basename "$enc")"; return 1; fi; sops --decrypt "$enc" > "$plain" || return 1; ${EDITOR:-${VISUAL:-nano}} "$plain"; sops --encrypt "$plain" > "$enc" || return 1; shred -u "$plain" 2>/dev/null || rm -f "$plain"; ok "updated $(basename "$enc")"; }
+
+cmd_db_init(){
+  if [ ! -f "$ROOT_DIR/.installed" ]; then err "setup not run (./setup.sh)"; return 1; fi
+  if [ ! -d "$ROOT_DIR/venv" ]; then err "missing venv"; return 1; fi
+  (cd "$ROOT_DIR" && PYTHONPATH="$ROOT_DIR:$(pwd)/packages/core/src" "$ROOT_DIR/venv/bin/python" -m vibrae_core.init_db)
+  ok "database initialized"
+}
+
 cmd_env_sync(){
   ensure_env
   local defaults
@@ -250,11 +280,11 @@ MUSIC_MODE=folder
 MUSIC_DIR=music
 USB_SUBDIR=
 VIBRAE_MUSIC=
-WEB_DIST=front/dist
-FRONTEND_DIST=/front/dist
+FRONTEND_DIST=/apps/web/dist
+# WEB_DIST deprecated; FRONTEND_DIST is canonical
 FRONTEND_PORT=9081
 BACKEND_PORT=8000
-BACKEND_MODULE=backend.main:app
+BACKEND_MODULE=apps.api.src.vibrae_api.main:app
 SECRET_KEY=change-me-please
 LOG_LEVEL=INFO
 LOG_KEEP=5
@@ -298,7 +328,7 @@ cmd_check_env(){
   check SECRET_KEY "JWT signing secret is required"
   check BACKEND_PORT "defaults to 8000 if unset"
   check FRONTEND_PORT "defaults to 9081 if unset"
-  check FRONTEND_DIST "path to exported web (default /front/dist)"
+  check FRONTEND_DIST "path to exported web (default /apps/web/dist)"
   # Music/source
   local mode; mode="$(kv_get MUSIC_MODE)"; [ -z "$mode" ] && mode="$(kv_get MUSIC_SOURCE_MODE)"
   if [ -z "$mode" ]; then printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "MUSIC_MODE" "folder|usb (default folder)"; issues=$((issues+1)); fi
@@ -358,13 +388,13 @@ PY
 
 # --- Raspberry Pi helpers ---
 is_pi(){ [ -f /etc/raspberrypi-release ] || grep -qi 'raspberry' /proc/cpuinfo 2>/dev/null || grep -qi 'raspi' /proc/cpuinfo 2>/dev/null; }
-cmd_pi_install(){ license_notice; if ! is_pi; then warn "Not a Raspberry Pi (continuing anyway)"; fi; sudo bash "$ROOT_DIR/raspi/setup.sh"; }
+cmd_pi_install(){ license_notice; if ! is_pi; then warn "Not a Raspberry Pi (continuing anyway)"; fi; sudo bash "$ROOT_DIR/scripts/pi/setup.sh"; }
 cmd_pi_start(){
   license_notice
   if [ ! -f "$ROOT_DIR/.installed" ]; then warn "setup has not been run locally; proceeding with Pi systemd start"; fi
-  sudo bash "$ROOT_DIR/raspi/run.sh"
+  sudo bash "$ROOT_DIR/scripts/pi/run.sh"
 }
-cmd_pi_stop(){ license_notice; sudo bash "$ROOT_DIR/raspi/stop.sh"; }
+cmd_pi_stop(){ license_notice; sudo bash "$ROOT_DIR/scripts/pi/stop.sh"; }
 cmd_pi_status(){ banner; systemctl --no-pager status vibrae-backend vibrae-frontend vibrae-cloudflared || true; }
 cmd_pi_logs(){ local unit="${1:-vibrae-backend}"; journalctl -u "$unit" -f; }
 
@@ -416,7 +446,9 @@ dispatch(){
     contact) shift; contact_information "$@";;
     github) shift; cmd_github "$@";;
 
-  env) shift; case "${1-}" in show) shift; cmd_env_show;; edit) shift; cmd_env_edit;; set) shift; cmd_env_set "$@";; sync) shift; cmd_env_sync;; *) usage; return 1;; esac;;
+  env) shift; case "${1-}" in show) shift; cmd_env_show;; edit) shift; cmd_env_edit;; encrypt) shift; cmd_env_encrypt;; decrypt) shift; cmd_env_decrypt;; edit-sec) shift; cmd_env_edit_sec;; set) shift; cmd_env_set "$@";; sync) shift; cmd_env_sync;; *) usage; return 1;; esac;;
+
+  db) shift; case "${1-}" in init) shift; cmd_db_init ;; *) usage; return 1;; esac;;
 
     autostart) shift; cmd_autostart "$@";;
     source) shift; case "$1" in detect) shift; cmd_source_detect;; *) usage; return 1;; esac;;

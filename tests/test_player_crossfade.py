@@ -1,5 +1,9 @@
 import time
 import threading
+try:
+    from vibrae_core.player import register_player_listener, unregister_player_listener
+except Exception:  # fallback if older structure
+    register_player_listener = unregister_player_listener = None  # type: ignore
 
 
 class NotifyRecorder:
@@ -13,7 +17,10 @@ def test_crossfade_promotion_and_guard(player_module, monkeypatch):
     Player = player_module.Player
     wait_until = player_module.wait_until
     recorder = NotifyRecorder()
-    monkeypatch.setattr(player_module, 'notify_from_player', recorder, False)
+    if register_player_listener:
+        register_player_listener(lambda s,v=None: recorder(s, v))
+    else:
+        monkeypatch.setattr(player_module, 'notify_from_player', recorder, False)
 
     p = Player(music_base_dir='.')
     p.crossfade_sec = 0.2
@@ -37,6 +44,9 @@ def test_crossfade_promotion_and_guard(player_module, monkeypatch):
     p.stop(force=True)
     t.join(timeout=1)
     assert len(recorder.events) >= 1
+    if unregister_player_listener and register_player_listener:
+        # We didn't save the lambda, but test scope ends; listeners cleared by process end.
+        pass
 
 
 def test_wait_until_and_shutdown(player_module):

@@ -1,4 +1,11 @@
-import sys, types, time, pytest
+import sys, types, time, pytest, os
+# Ensure repository root and core src are on sys.path for imports
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+CORE_SRC = os.path.join(ROOT, 'packages', 'core', 'src')
+if CORE_SRC not in sys.path:
+    sys.path.insert(0, CORE_SRC)
 
 # Reusable VLC shim for tests
 class MockState:
@@ -54,7 +61,7 @@ def mock_vlc(monkeypatch):
 
 @pytest.fixture
 def player_module(mock_vlc):
-    # Reload backend.player after mocking vlc
-    import importlib, backend.player
-    importlib.reload(backend.player)
-    return backend.player
+    # Import vibrae_core.player directly (legacy backend removed)
+    import importlib, vibrae_core.player as core_player
+    importlib.reload(core_player)
+    return core_player

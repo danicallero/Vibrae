@@ -19,7 +19,8 @@ printf "This is free software released under the GNU GPLv3; you may redistribute
 printf "There is NO WARRANTY, to the extent permitted by law. See LICENSE for details.\n\n"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$ROOT_DIR"
 
 if [[ "$(uname)" == "Darwin" ]]; then
 	info "macOS: checking dependencies via Homebrew"
@@ -51,8 +52,9 @@ try:
 		sys.exit(0)
 except Exception:
 		sys.exit(1)
+
 PY
-		then
+		# If the heredoc python check failed (exit != 0), install VLC
 			brew install --cask -q vlc || true
 		fi
 	else
@@ -103,8 +105,7 @@ PY
 
 info "database"
 if [ ! -f data/garden.db ]; then
-	# Initialize database using vibrae_core
-	(cd "$SCRIPT_DIR" && PYTHONPATH="$SCRIPT_DIR:$(pwd)/packages/core/src" python -m vibrae_core.init_db)
+	(cd "$ROOT_DIR" && PYTHONPATH="$ROOT_DIR:$(pwd)/packages/core/src" python -m vibrae_core.init_db)
 fi
 
 info "node deps"
@@ -117,9 +118,9 @@ fi
 # Note: ffmpeg is optional and not required on macOS.
 
 info "env validation"
-ENV_FILE="$SCRIPT_DIR/.env"
+ENV_FILE="$ROOT_DIR/.env"
 if [ ! -f "$ENV_FILE" ]; then
-	cp -n "$SCRIPT_DIR/.env.example" "$ENV_FILE" 2>/dev/null || true
+	cp -n "$ROOT_DIR/.env.example" "$ENV_FILE" 2>/dev/null || true
 fi
 touch "$ENV_FILE"
 MISSING=0
@@ -154,7 +155,7 @@ ok "Setup complete. Use the CLI (vibrae start) or ./run.sh to start the app."
 
 # Make 'vibrae' available globally if possible
 if ! command -v vibrae >/dev/null 2>&1; then
-	CLI_SRC="$SCRIPT_DIR/vibrae"
+	CLI_SRC="$ROOT_DIR/vibrae"
 	if [ -f "$CLI_SRC" ]; then
 		chmod +x "$CLI_SRC" 2>/dev/null || true
 		DEST="/usr/local/bin/vibrae"
@@ -175,7 +176,7 @@ if ! command -v vibrae >/dev/null 2>&1; then
 fi
 
 # Mark installation completed
-STAMP_FILE="$SCRIPT_DIR/.installed"
+STAMP_FILE="$ROOT_DIR/.installed"
 date +'installed_at=%Y-%m-%dT%H:%M:%S%z' > "$STAMP_FILE" 2>/dev/null || true
 echo "venv=$SCRIPT_DIR/venv" >> "$STAMP_FILE" 2>/dev/null || true
 echo "python=$("$SCRIPT_DIR/venv/bin/python" -V 2>/dev/null | tr -d '\n')" >> "$STAMP_FILE" 2>/dev/null || true

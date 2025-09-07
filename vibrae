@@ -98,9 +98,17 @@ ensure_env(){ [ -f "$ENV_FILE" ] || { echo "# Vibrae environment" > "$ENV_FILE";
 
 run_script(){
   local script="$1"
-  if [ ! -x "$ROOT_DIR/$script" ] && [ -f "$ROOT_DIR/$script" ]; then chmod +x "$ROOT_DIR/$script" || true; fi
-  if [ ! -f "$ROOT_DIR/$script" ]; then err "script not found: $script"; return 1; fi
-  (cd "$ROOT_DIR" && ./"$script")
+  local candidate
+  # Preferred exact path at root
+  if [ -f "$ROOT_DIR/$script" ]; then
+    candidate="$ROOT_DIR/$script"
+  elif [ -f "$ROOT_DIR/scripts/app/$script" ]; then
+    candidate="$ROOT_DIR/scripts/app/$script"
+  else
+    err "script not found: $script (looked in . and scripts/app)"; return 1
+  fi
+  if [ ! -x "$candidate" ]; then chmod +x "$candidate" 2>/dev/null || true; fi
+  (cd "$ROOT_DIR" && bash "$candidate")
 }
 
 kv_set(){

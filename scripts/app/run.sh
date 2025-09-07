@@ -6,6 +6,7 @@ set +m 2>/dev/null || true
 
 # Base dir for relative paths
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Minimal color (respect NO_COLOR and non-TTY)
 if [ -z "$NO_COLOR" ] && [ -t 1 ] && command -v tput >/dev/null 2>&1 && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
@@ -42,7 +43,7 @@ if ! command -v vibrae >/dev/null 2>&1; then
 fi
 
 # Log dirs & rotation
-LOG_DIR="$SCRIPT_DIR/logs"
+LOG_DIR="$ROOT_DIR/logs"
 HISTORY_DIR="$LOG_DIR/history"
 mkdir -p "$LOG_DIR" "$HISTORY_DIR"
 
@@ -87,22 +88,22 @@ log_cmd() {
 }
 
 # Require prior installation and activate venv
-if [ ! -f "$SCRIPT_DIR/.installed" ]; then
+if [ ! -f "$ROOT_DIR/.installed" ]; then
   err "setup has not been run. Please run ./setup.sh first."
   exit 1
 fi
-if [ -d "$SCRIPT_DIR/venv" ]; then
+if [ -d "$ROOT_DIR/venv" ]; then
   # shellcheck disable=SC1091
-  source "$SCRIPT_DIR/venv/bin/activate"
+  source "$ROOT_DIR/venv/bin/activate"
 else
   err "Python venv missing. Please run ./setup.sh to create it."
   exit 1
 fi
 
 # Load .env (export all vars)
-if [ -f "$SCRIPT_DIR/.env" ]; then
+if [ -f "$ROOT_DIR/.env" ]; then
   set -a
-  . "$SCRIPT_DIR/.env"
+  . "$ROOT_DIR/.env"
   set +a
 fi
 
@@ -112,11 +113,11 @@ FRONTEND_PORT="${FRONTEND_PORT:-9081}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 BACKEND_MODULE="${BACKEND_MODULE:-apps.api.src.vibrae_api.main:app}"
 
-SERVE_ROOT="$SCRIPT_DIR$FRONTEND_DIST"
+SERVE_ROOT="$ROOT_DIR$FRONTEND_DIST"
 if [ ! -d "$SERVE_ROOT" ]; then
   if command -v npm >/dev/null 2>&1; then
     warn "missing frontend export at $SERVE_ROOT; exporting now"
-  (cd "$SCRIPT_DIR/apps/web" && npx expo export --platform web) || warn "web export failed; frontend may be unavailable"
+  (cd "$ROOT_DIR/apps/web" && npx expo export --platform web) || warn "web export failed; frontend may be unavailable"
   else
     warn "Node/npm not available; skipping web export. Frontend may be unavailable."
   fi
@@ -142,10 +143,10 @@ echo "----- $(date) start uvicorn on :$BACKEND_PORT ($BACKEND_MODULE) -----" >> 
 # Player/application logs land in backend.log via shared config; keep a dedicated player.log rotated for legacy readers.
 rotate_log "$LOG_DIR/player.log" "$LOG_KEEP" "$HISTORY_DIR"
 echo "----- $(date) start player logs -----" >> "$LOG_DIR/player.log"
-LOG_CFG="$SCRIPT_DIR/config/logging.ini"
+LOG_CFG="$ROOT_DIR/config/logging.ini"
 
 # Run uvicorn from repo root so imports work; capture all output.
-(cd "$SCRIPT_DIR" && nohup env PYTHONPATH="$SCRIPT_DIR:$(pwd)/packages/core/src:$(pwd)/apps/api/src" \
+(cd "$ROOT_DIR" && nohup env PYTHONPATH="$ROOT_DIR:$(pwd)/packages/core/src:$(pwd)/apps/api/src" \
   uvicorn "$BACKEND_MODULE" --host 0.0.0.0 --port "$BACKEND_PORT" --log-config "$LOG_CFG" \
   >> "$LOG_DIR/backend.log" 2>&1 &)
 
@@ -188,15 +189,15 @@ if [[ "$OS_TYPE" == "Darwin" ]]; then
   # Restart clean if already running
     if pgrep -x nginx >/dev/null 2>&1; then
       warn "nginx already running; stopping for clean restart"
-      if [ -x "$SCRIPT_DIR/scripts/nginxctl.sh" ]; then
-        sudo "$SCRIPT_DIR/scripts/nginxctl.sh" stop >/dev/null 2>&1 || true
+      if [ -x "$ROOT_DIR/scripts/nginxctl.sh" ]; then
+        sudo "$ROOT_DIR/scripts/nginxctl.sh" stop >/dev/null 2>&1 || true
       else
         sudo nginx -s stop >/dev/null 2>&1 || true
       fi
       sleep 1
     fi
-  if [ -x "$SCRIPT_DIR/scripts/nginxctl.sh" ]; then
-    sudo "$SCRIPT_DIR/scripts/nginxctl.sh" start "$RENDERED_NGINX_CONF"
+  if [ -x "$ROOT_DIR/scripts/nginxctl.sh" ]; then
+    sudo "$ROOT_DIR/scripts/nginxctl.sh" start "$RENDERED_NGINX_CONF"
   else
     sudo nginx -c "$RENDERED_NGINX_CONF"
   fi
@@ -204,15 +205,15 @@ if [[ "$OS_TYPE" == "Darwin" ]]; then
     warn "envsubst not found. Using nginx.conf as-is."
     if pgrep -x nginx >/dev/null 2>&1; then
       warn "nginx already running; stopping for clean restart"
-      if [ -x "$SCRIPT_DIR/scripts/nginxctl.sh" ]; then
-        sudo "$SCRIPT_DIR/scripts/nginxctl.sh" stop >/dev/null 2>&1 || true
+      if [ -x "$ROOT_DIR/scripts/nginxctl.sh" ]; then
+        sudo "$ROOT_DIR/scripts/nginxctl.sh" stop >/dev/null 2>&1 || true
       else
         sudo nginx -s stop >/dev/null 2>&1 || true
       fi
       sleep 1
     fi
-    if [ -x "$SCRIPT_DIR/scripts/nginxctl.sh" ]; then
-      sudo "$SCRIPT_DIR/scripts/nginxctl.sh" start "$NGINX_CONF"
+    if [ -x "$ROOT_DIR/scripts/nginxctl.sh" ]; then
+      sudo "$ROOT_DIR/scripts/nginxctl.sh" start "$NGINX_CONF"
     else
       sudo nginx -c "$NGINX_CONF"
     fi

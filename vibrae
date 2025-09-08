@@ -488,7 +488,16 @@ _register(){ # name function description
   _COMMANDS="$_COMMANDS
 $1|$2|$3"; }
 _find_fn(){ printf '%s' "$_COMMANDS" | awk -F'|' -v C="$1" 'NF>=2 && $1==C {print $2; exit}'; }
-_is_registered(){ _find_fn "$1" >/dev/null 2>&1; return $?; }
+_is_registered(){
+  # awk exits 0 even when no match; ensure the output is non-empty
+  local fn
+  fn="$(_find_fn "$1")"
+  if [ -n "$fn" ]; then
+    return 0
+  else
+    return 1
+  fi
+}
 _list_commands(){ printf '%s' "$_COMMANDS" | awk -F'|' 'NF>=3 {printf "  %-16s %s\n", $1, $3}' | sort; }
 
 # Register primary commands

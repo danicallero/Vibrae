@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+import logging
 from pydantic import BaseModel
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -7,6 +8,7 @@ from vibrae_core.db import SessionLocal
 from vibrae_core.models import Routine
 
 router = APIRouter(prefix="/schedule", tags=["schedule"])
+log = logging.getLogger("vibrae_api")
 
 def get_db():
     db = SessionLocal()
@@ -33,7 +35,9 @@ class RoutineUpdateRequest(BaseModel):
 
 @router.get("/")
 def list_routines(user = Depends(get_current_user), db: Session = Depends(get_db)):
-    return db.query(Routine).all()
+    items = db.query(Routine).all()
+    log.info("schedule.list count=%d actor=%s", len(items), getattr(user, "username", "?"))
+    return items
 
 @router.post("/")
 def create_routine(data: RoutineCreateRequest, user = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -48,12 +52,14 @@ def create_routine(data: RoutineCreateRequest, user = Depends(get_current_user),
     db.add(routine)
     db.commit()
     db.refresh(routine)
+    log.info("schedule.create id=%s actor=%s", routine.id, getattr(user, "username", "?"))
     return routine
 
 @router.put("/{routine_id}")
 def update_routine(routine_id: int, update: RoutineUpdateRequest, user = Depends(get_current_user), db: Session = Depends(get_db)):
     routine = db.query(Routine).filter(Routine.id == routine_id).first()
     if not routine:
+        log.warning("schedule.update not_found id=%s actor=%s", routine_id, getattr(user, "username", "?"))
         raise HTTPException(status_code=404, detail="Routine not found")
     if update.scene_id is not None:
         routine.scene_id = update.scene_id
@@ -69,13 +75,16 @@ def update_routine(routine_id: int, update: RoutineUpdateRequest, user = Depends
         routine.volume = update.volume
     db.commit()
     db.refresh(routine)
+    log.info("schedule.update ok id=%s actor=%s", routine.id, getattr(user, "username", "?"))
     return routine
 
 @router.delete("/{routine_id}/")
 def delete_routine(routine_id: int, user = Depends(get_current_user), db: Session = Depends(get_db)):
     routine = db.query(Routine).filter(Routine.id == routine_id).first()
     if not routine:
+        log.warning("schedule.delete not_found id=%s actor=%s", routine_id, getattr(user, "username", "?"))
         raise HTTPException(status_code=404, detail="Routine not found")
     db.delete(routine)
     db.commit()
+    log.info("schedule.delete ok id=%s actor=%s", routine_id, getattr(user, "username", "?"))
     return {"status": "deleted"}

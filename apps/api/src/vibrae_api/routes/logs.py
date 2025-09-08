@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Header, Response
+import logging
 from fastapi.responses import FileResponse
 from typing import Optional, List, Dict
 from pathlib import Path
@@ -7,10 +8,12 @@ import re
 from vibrae_core.auth import get_current_user, decode_token
 
 router = APIRouter(prefix="/logs", tags=["logs"])
+log = logging.getLogger("vibrae_api")
 
 _unused = decode_token
 
 def token_from_header_or_query(Authorization: Optional[str] = Header(None), token: Optional[str] = None):
+    # Kept for backward-compat dependency signature but no longer used by routes.
     if token:
         return decode_token(token)
     if Authorization and Authorization.startswith("Bearer "):
@@ -21,9 +24,9 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 LOGS_DIR = REPO_ROOT / "logs"
 HISTORY_DIR = LOGS_DIR / "history"
 
-ALLOWED_BASENAMES = {"backend.log", "player.log", "serve.log", "cloudflared.log"}
+ALLOWED_BASENAMES = {"backend.log", "player.log", "websocket.log", "auth.log", "serve.log", "cloudflared.log"}
 HISTORY_PREFIXES = {name.replace(".log", "") for name in ALLOWED_BASENAMES}
-HISTORY_REGEX = re.compile(r"^(backend|player|serve|cloudflared)-(\d{8})-(\d{6})\.log$")
+HISTORY_REGEX = re.compile(r"^(backend|player|websocket|auth|serve|cloudflared)-(\d{8})-(\d{6})\.log$")
 
 def _file_info(p: Path) -> Dict:
     try:
@@ -118,10 +121,12 @@ def get_log_content(file: str, tail: int = 200, history: bool = False, user = De
         content = _tail_file(path, tail)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    log.info("logs.content file=%s history=%s tail=%d actor=%s", path.name, history, tail, getattr(user, "username", "?"))
     return Response(content, media_type="text/plain; charset=utf-8")
 
 @router.get("/download")
-def download_log(file: str, history: bool = False, token: Optional[str] = None, _=Depends(token_from_header_or_query)):
+def download_log(file: str, history: bool = False, user = Depends(get_current_user)):
     path = _resolve_log_path(file, history)
     headers = {"Content-Disposition": f"attachment; filename={path.name}"}
+    log.info("logs.download file=%s history=%s actor=%s", path.name, history, getattr(user, "username", "?"))
     return FileResponse(str(path), media_type="text/plain; charset=utf-8", headers=headers)

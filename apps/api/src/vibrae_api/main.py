@@ -12,7 +12,7 @@ from vibrae_core.db import Base, engine
 from vibrae_core.logging_config import configure_logging
 from .routes import users, scenes, schedule, logs, control
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("vibrae_api")
 
 configure_logging()
 settings = Settings()
@@ -40,7 +40,7 @@ async def request_logger(request, call_next):  # type: ignore
         return await call_next(request)
     response = await call_next(request)
     duration_ms = int((time.time() - start) * 1000)
-    logger.info("%s %s -> %s (%d ms)", request.method, path, response.status_code, duration_ms)
+    logger.info("http %s %s -> %s (%dms)", request.method, path, response.status_code, duration_ms)
     return response
 
 # Group API routes under /api for frontend expectation, while keeping legacy root mounting (for direct calls/scripts).
@@ -67,7 +67,7 @@ async def on_startup():
     from .routes.control import set_main_loop
     set_main_loop(loop)
     scheduler.start_background()
-    logger.info("Vibrae API started")
+    logger.info("api.start version=%s", app.version)
 
 @app.on_event("shutdown")
 async def on_shutdown():
@@ -75,7 +75,7 @@ async def on_shutdown():
         scheduler.stop_background()
     except Exception:  # pragma: no cover
         pass
-    logger.info("Vibrae API stopped")
+    logger.info("api.stop")
 
 @app.get("/health")
 async def health():

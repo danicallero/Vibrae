@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+import logging
 from pydantic import BaseModel
 from typing import Optional
 import os
@@ -8,6 +9,7 @@ from vibrae_core.db import SessionLocal
 from vibrae_core.models import Scene
 
 router = APIRouter(prefix="/scenes", tags=["scenes"])
+log = logging.getLogger("vibrae_api")
 
 MUSIC_DIR_ENV = os.getenv("MUSIC_DIR") or "music"
 MUSIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../../", MUSIC_DIR_ENV))
@@ -29,14 +31,18 @@ class SceneUpdateRequest(BaseModel):
 
 @router.get("/")
 def list_scenes(user = Depends(get_current_user), db: Session = Depends(get_db)):
-    return db.query(Scene).all()
+    items = db.query(Scene).all()
+    log.info("scenes.list count=%d actor=%s", len(items), getattr(user, "username", "?"))
+    return items
 
 @router.get("/folders/")
 def list_music_folders(user = Depends(get_current_user)):
     try:
         folders = [f for f in os.listdir(MUSIC_DIR) if os.path.isdir(os.path.join(MUSIC_DIR, f)) and not f.startswith('.')]
+        log.info("scenes.folders count=%d actor=%s", len(folders), getattr(user, "username", "?"))
         return {"folders": folders}
     except Exception as e:
+        log.error("scenes.folders error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/")
@@ -45,21 +51,25 @@ def create_scene(data: SceneCreateRequest, user = Depends(get_current_user), db:
     db.add(scene)
     db.commit()
     db.refresh(scene)
+    log.info("scenes.create id=%s name=%s actor=%s", scene.id, scene.name, getattr(user, "username", "?"))
     return scene
 
 @router.delete("/{scene_id}/")
 def delete_scene(scene_id: int, user = Depends(get_current_user), db: Session = Depends(get_db)):
     scene = db.query(Scene).filter(Scene.id == scene_id).first()
     if not scene:
+        log.warning("scenes.delete not_found id=%s actor=%s", scene_id, getattr(user, "username", "?"))
         raise HTTPException(status_code=404, detail="Scene not found")
     db.delete(scene)
     db.commit()
+    log.info("scenes.delete ok id=%s actor=%s", scene_id, getattr(user, "username", "?"))
     return {"status": "deleted"}
 
 @router.put("/{scene_id}/")
 def update_scene(scene_id: int, update: SceneUpdateRequest, user = Depends(get_current_user), db: Session = Depends(get_db)):
     scene = db.query(Scene).filter(Scene.id == scene_id).first()
     if not scene:
+        log.warning("scenes.update not_found id=%s actor=%s", scene_id, getattr(user, "username", "?"))
         raise HTTPException(status_code=404, detail="Scene not found")
     if update.name is not None:
         scene.name = update.name
@@ -67,4 +77,5 @@ def update_scene(scene_id: int, update: SceneUpdateRequest, user = Depends(get_c
         scene.path = update.path
     db.commit()
     db.refresh(scene)
+    log.info("scenes.update ok id=%s actor=%s", scene.id, getattr(user, "username", "?"))
     return scene

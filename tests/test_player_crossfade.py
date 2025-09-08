@@ -1,9 +1,11 @@
 import time
 import threading
-try:
-    from vibrae_core.player import register_player_listener, unregister_player_listener
-except Exception:  # fallback if older structure
-    register_player_listener = unregister_player_listener = None  # type: ignore
+
+# NOTE: Do NOT import register/unregister_player_listener symbols here because the
+# player_module fixture reloads vibrae_core.player. Importing the symbols before
+# reload would register callbacks against the old module instance and the new
+# Player would never emit to them. Always access listener functions via the
+# reloaded player_module object inside the test.
 
 
 class NotifyRecorder:
@@ -17,8 +19,8 @@ def test_crossfade_promotion_and_guard(player_module, monkeypatch):
     Player = player_module.Player
     wait_until = player_module.wait_until
     recorder = NotifyRecorder()
-    if register_player_listener:
-        register_player_listener(lambda s,v=None: recorder(s, v))
+    if hasattr(player_module, 'register_player_listener'):
+        player_module.register_player_listener(lambda s,v=None: recorder(s, v))
     else:
         monkeypatch.setattr(player_module, 'notify_from_player', recorder, False)
 
@@ -44,9 +46,7 @@ def test_crossfade_promotion_and_guard(player_module, monkeypatch):
     p.stop(force=True)
     t.join(timeout=1)
     assert len(recorder.events) >= 1
-    if unregister_player_listener and register_player_listener:
-        # We didn't save the lambda, but test scope ends; listeners cleared by process end.
-        pass
+    # Listener removal not strictly needed; process end clears registry.
 
 
 def test_wait_until_and_shutdown(player_module):

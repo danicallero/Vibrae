@@ -1,4 +1,10 @@
-import sys, types, time, pytest, os
+import sys, types, time, pytest, os, tempfile
+
+# Always force tests to use an isolated SQLite database file under a temp dir.
+# Do this before importing any vibrae_core modules (especially vibrae_core.db).
+if "VIBRAE_DB_URL" not in os.environ and "VIBRAE_DATABASE_URL" not in os.environ:
+    _test_db_dir = tempfile.mkdtemp(prefix="vibrae_test_db_")
+    os.environ["VIBRAE_DB_URL"] = f"sqlite:///{os.path.join(_test_db_dir, 'test_garden.db')}"
 # Ensure repository root and core src are on sys.path for imports
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT not in sys.path:
@@ -6,6 +12,8 @@ if ROOT not in sys.path:
 CORE_SRC = os.path.join(ROOT, 'packages', 'core', 'src')
 if CORE_SRC not in sys.path:
     sys.path.insert(0, CORE_SRC)
+
+# Note: sys.path setup remains after env override.
 
 # Reusable VLC shim for tests
 class MockState:

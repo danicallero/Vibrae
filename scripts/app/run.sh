@@ -163,6 +163,10 @@ echo "----- $(date) start uvicorn on :$BACKEND_PORT ($BACKEND_MODULE) -----" >> 
 # Player/application logs land in backend.log via shared config; keep a dedicated player.log rotated for legacy readers.
 rotate_log "$LOG_DIR/player.log" "$LOG_KEEP" "$HISTORY_DIR"
 echo "----- $(date) start player logs -----" >> "$LOG_DIR/player.log"
+rotate_log "$LOG_DIR/websocket.log" "$LOG_KEEP" "$HISTORY_DIR"
+echo "----- $(date) start websocket logs -----" >> "$LOG_DIR/websocket.log"
+rotate_log "$LOG_DIR/auth.log" "$LOG_KEEP" "$HISTORY_DIR"
+echo "----- $(date) start auth logs -----" >> "$LOG_DIR/auth.log"
 LOG_CFG_TEMPLATE="$ROOT_DIR/config/logging.ini"
 LOG_LEVEL_EFFECTIVE="${LOG_LEVEL:-INFO}"
 # Render logging config (replace __LOG_LEVEL__) into logs dir for uvicorn
@@ -334,6 +338,8 @@ fi
     rotate_log "$LOG_DIR/player.log" "$LOG_KEEP" "$HISTORY_DIR"
     rotate_log "$LOG_DIR/serve.log" "$LOG_KEEP" "$HISTORY_DIR"
     rotate_log "$LOG_DIR/cloudflared.log" "$LOG_KEEP" "$HISTORY_DIR"
+  rotate_log "$LOG_DIR/websocket.log" "$LOG_KEEP" "$HISTORY_DIR"
+  rotate_log "$LOG_DIR/auth.log" "$LOG_KEEP" "$HISTORY_DIR"
   done
 ) >/dev/null 2>&1 &
 echo $! > "$LOG_DIR/log-rotate.pid"

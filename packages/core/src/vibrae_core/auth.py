@@ -1,32 +1,64 @@
-"""Authentication helpers (migrated from legacy `backend.auth`).
-
-Differences vs original:
- - Imports from vibrae_core.* instead of backend.*
- - Provides a development fallback SECRET_KEY if none is configured, so tests
-   can run without an .env file present.
-"""
+"""Authentication helpers."""
 from __future__ import annotations
 
+# Standard library
+import logging
+import warnings
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional, Dict
+from typing import Optional, Dict, Iterator
 
+# Third-party
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError, ExpiredSignatureError
-from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
+# Local
 from vibrae_core.db import SessionLocal
 from vibrae_core.models import User
+from vibrae_core.config import Settings
 
-env_path = Path(__file__).resolve().parent / ".env"
-if env_path.exists():  # Silence warning if absent (common in tests)
-    load_dotenv(dotenv_path=env_path, override=True)
+
+try:  # Optional dependency; provide lightweight fallback for test environments
+    from passlib.context import CryptContext  # type: ignore
+except Exception:  # pragma: no cover
+    class _DummyHasher:
+        def hash(self, password: str) -> str:
+            import hashlib
+            salt = os.getenv("VIBRAE_HASH_SALT", "static-test-salt").encode()
+            return hashlib.sha256(salt + password.encode()).hexdigest()
+
+        def verify(self, plain: str, hashed: str) -> bool:
+            return self.hash(plain) == hashed
+
+    class CryptContext:  # type: ignore
+        def __init__(self, *a, **kw):
+            self._impl = _DummyHasher()
+
+        def hash(self, password: str) -> str:
+            return self._impl.hash(password)
+
+        def verify(self, plain: str, hashed: str) -> bool:
+            return self._impl.verify(plain, hashed)
+
+
+# Load env from backend file
+Settings().load_backend_env()
+
+logger = logging.getLogger(__name__)
 
 SECRET_KEY = os.getenv("SECRET_KEY") or "dev-insecure-secret-key-change-me"
+
+if SECRET_KEY == "dev-insecure-secret-key-change-me":
+    warnings.warn(
+        "Using insecure default SECRET_KEY. Set a proper one in your environment!",
+        RuntimeWarning,
+    )
+    logger.warning("auth: insecure default SECRET_KEY in use; set a proper one in env")
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 12
 
@@ -34,64 +66,94 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a plaintext password against a hashed value."""
     return pwd_context.verify(plain_password, hashed_password)
 
 
 def hash_password(password: str) -> str:
+    """Return a hashed representation of ``password``."""
     return pwd_context.hash(password)
 
-# Backwards compatibility: legacy name expected by older init_db
-def get_password_hash(password: str) -> str:  # pragma: no cover - thin wrapper
+
+# Backwards compatibility: legacy name expected by init_db
+def get_password_hash(password: str) -> str:
     return hash_password(password)
 
 
+def authenticate_user(username: str, password: str, db: Session) -> Optional[User]:
+    """Authenticate a user by username and password.
+    Verifies whether the user exists in the DB and the password is correct.
+    Returns the ``User`` instance when authentication succeeds.
+    """
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        return None
+    if not verify_password(password, getattr(user, "password_hash", "")):
+        return None
+    return user
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """Create a signed JWT access token containing ``data``.
+
+    note: accepts a dict (e.g., {"sub": username}).
+    """
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS))
     to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return token
 
 
 def decode_token_raw(token: str) -> Dict:
+    """Decode a JWT token without translating exceptions."""
     return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
 
 
 def decode_token(token: str) -> Dict:
+    """Safe decode a JWT token with controlled exceptions."""
     try:
         return decode_token_raw(token)
-    except ExpiredSignatureError as e:  # pragma: no cover - branch specific
-        raise ExpiredSignatureError("Token caducado") from e
-    except JWTError as e:  # pragma: no cover - branch specific
-        raise JWTError("Token inválido") from e
+    except ExpiredSignatureError as e:  # pragma: no cover
+        raise ExpiredSignatureError("Token expired") from e
+    except JWTError as e:  # pragma: no cover
+        raise JWTError("Invalid token") from e
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="users/login")
 
 
-def get_db():
+def get_db() -> Iterator[Session]:
+    """Yield a SQLAlchemy session and ensure it's closed after use."""
     db = SessionLocal()
     try:
         yield db
-    finally:  # pragma: no cover - trivial
+    finally:  # pragma: no cover
         db.close()
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+    """Resolve the current user from a bearer token."""
     try:
         payload = decode_token(token)
     except ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="El token ha caducado. Inicia sesión de nuevo.")
+        logging.getLogger("vibrae_api.auth").warning("auth.token expired")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="expired token")
     except JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido.")
+        logging.getLogger("vibrae_api.auth").warning("auth.token invalid")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
 
     username = payload.get("sub")
     if not username:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido (sin sujeto)")
+        logging.getLogger("vibrae_api.auth").warning("auth.token missing_sub")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token: no subject")
 
     user = db.query(User).filter(User.username == username).first()
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no encontrado")
+        logging.getLogger("vibrae_api.auth").warning("auth.user not_found sub=%s", username)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token: user not found")
+    logging.getLogger("vibrae_api.auth").info("auth.user ok sub=%s", username)
     return user
+
 
 __all__ = [
     "verify_password",

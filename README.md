@@ -108,14 +108,27 @@ pip install -e packages/core/src  # if you want isolated editable core
 
 ### 3. Configure environment variables
 
-Copy the example files and edit values as needed:
+The CLI manages environment files for you now (root `.env` is deprecated and ignored).
 
+Backend (runtime / secrets):
 ```bash
-cp .env.example .env
-cp apps/web/.env.example apps/web/.env
+./vibrae env sync      # create config/env/.env.backend with recommended keys (non-destructive)
+./vibrae env edit      # open it and set SECRET_KEY, DOMAIN, etc.
 ```
 
-See [Environment Variables](#environment-variables) for details and defaults.
+Frontend (build‑time public values):
+```bash
+./vibrae env f-sync    # ensure config/env/.env.frontend exists (adds defaults if missing)
+./vibrae env f-edit    # edit/add EXPO_PUBLIC_* vars (e.g. API base path)
+```
+
+Optional encryption (SOPS + PGP) once values are in place:
+```bash
+./vibrae env encrypt   # backend -> .env.backend.enc (plaintext kept locally)
+./vibrae env f-encrypt # frontend -> .env.frontend.enc (plaintext kept locally)
+```
+
+See [Environment Variables](#environment-variables) for detailed layering and secret workflow.
 
 ### 4. Add your music files
 
@@ -175,7 +188,7 @@ Alternatively, you can run `./stop.sh`.
 
 ## Deployment & Configuration
 
-- **Environment Variables**: Managed via root `.env` (plus optional encrypted runtime file). See `.env.example`.
+- **Environment Variables**: Managed via `vibrae env` (backend & frontend files under `config/env/`; root `.env` deprecated).
 - **nginx**: Reverse proxy for API, WebSocket, static assets.
 - **Cloudflare Tunnel**: HTTPS public access; token required when enabled.
 - **Scripts**: `scripts/app/run.sh` / `scripts/app/stop.sh` (invoked by CLI helpers when available).
@@ -187,33 +200,47 @@ Alternatively, you can run `./stop.sh`.
 
 ## Environment Variables
 
+Root `.env` is now deprecated (kept only for very old setups). The canonical managed files live under `config/env/` and are created / updated via the `vibrae env` command group.
+
 Layered sources (lowest precedence first):
 
-1. Root `.env` – baseline, non‑secret defaults (shared by scripts & backend).
-2. Backend plaintext `config/env/.env.backend` (if present) – working copy of backend secrets (NOT committed).
-3. Frontend plaintext `config/env/.env.frontend` (if present) – working copy of build‑time public values (`EXPO_PUBLIC_*`, NOT committed).
-4. Encrypted backend `config/env/.env.backend.enc` – committed; decrypts over (2) when changed.
-5. Encrypted frontend `config/env/.env.frontend.enc` – committed; decrypts over (3) when changed.
-6. Live shell exports – highest precedence for ad‑hoc overrides.
+1. Backend plaintext `config/env/.env.backend` – working copy (NOT committed)
+2. Frontend plaintext `config/env/.env.frontend` – build‑time public values (NOT committed)
+3. Encrypted backend `config/env/.env.backend.enc` – committed secret blob
+4. Encrypted frontend `config/env/.env.frontend.enc` – committed secret/public build blob
+5. Live shell exports – ad‑hoc overrides when launching processes manually
 
-Legacy names (`.env.runtime*`, `.env.frontend.runtime*`) are still READ as a fallback (backend only) with a warning so you can migrate, but new writes/encrypt operations ONLY use `backend` / `frontend` names.
+Legacy fallbacks (warn on use): `.env.runtime*`, `.env.frontend.runtime*`, and root `.env`.
 
-`run.sh` sourcing order now: `.env` → `.env.backend` (or legacy runtime fallback with warning) → `.env.frontend` (no legacy fallback; migrate if still using the old name).
+`run.sh` sourcing order now: `.env.backend` (or legacy runtime fallback with warning) → `.env.frontend` → shell exports.
 
-### Root `.env` keys:
+### Backend keys (`.env.backend`)
 
-- DOMAIN: your public domain (e.g. garden.example.com)
-- FRONTEND_PORT: static server port (default: 9081)
-- FRONTEND_DIST: path to the exported web build, relative to repo root (default: /apps/web/dist)
-- BACKEND_PORT: backend API port (default: 8000)
-- BACKEND_MODULE: Uvicorn app module (default: apps.api.src.vibrae_api.main:app)
-- MUSIC_DIR: path relative to repo root for music files (default: music)
-- SECRET_KEY: JWT signing secret used by backend auth (required)
-- LOG_LEVEL: backend/app log level (default: INFO)
-- LOG_KEEP: how many rotated files to keep per log (default: 5)
-- LOG_ROTATE_INTERVAL_HOURS: periodic rotation interval (default: 12)
-- NGINX_CONF: nginx config file path (default: nginx.conf)
-- CLOUDFLARE_TUNNEL_TOKEN: Cloudflare Tunnel token (required when TUNNEL=cloudflared)
+| Key | Purpose | Default |
+|-----|---------|---------|
+| BACKEND_PORT | API listen port | 8000 |
+| BACKEND_MODULE | Uvicorn module path | apps.api.src.vibrae_api.main:app |
+| FRONTEND_PORT | Static server port (npx serve) | 9081 |
+| FRONTEND_DIST | Exported web build relative path | /apps/web/dist |
+| MUSIC_MODE | folder or usb | folder |
+| MUSIC_DIR | Relative music directory | music |
+| SECRET_KEY | JWT signing / security secret | change-me-please |
+| LOG_LEVEL | Log verbosity | INFO |
+| LOG_KEEP | Rotated history count | 5 |
+| LOG_ROTATE_INTERVAL_HOURS | Rotation interval | 12 |
+| DOMAIN | Public domain (if tunnel/proxy) | (empty) |
+| NGINX_CONF | Config template for nginx | nginx.conf |
+| TUNNEL | Tunnel mode (cloudflared, none) | cloudflared |
+| CLOUDFLARE_TUNNEL_TOKEN | Token when TUNNEL=cloudflared | (empty) |
+| AUTOSTART | Auto start services when entering shell | false |
+
+### Frontend keys (`.env.frontend`)
+
+| Key | Purpose | Default |
+|-----|---------|---------|
+| EXPO_PUBLIC_API_BASE | API base path used by web/PWA | /api |
+
+Add more `EXPO_PUBLIC_*` variables as needed; they are bundled at build/export time.
 
 Notes:
 - `run.sh` rotates logs and renders `nginx.conf` with `${DOMAIN}`, `${BACKEND_PORT}`, `${FRONTEND_PORT}`.
@@ -244,29 +271,26 @@ gpg --import path/to/public_key_2.asc
 Confirm fingerprints match those in `.sops.yaml`.
 
 #### Migrating old runtime files
-If you previously used `*.runtime*` names:
-```bash
-./vibrae env migrate
-```
-This renames & re-encrypts to backend/frontend naming (idempotent).
+If you still have legacy `*.runtime*` or root `.env` files, manually copy relevant keys into `config/env/.env.backend` / `.env.frontend` then remove the legacy files. The CLI will warn if it detects them.
 
 #### Backend secret workflow
 ```bash
-cp config/env/.env.backend.example config/env/.env.backend   # scaffold (or run 'vibrae env sync')
-./vibrae env encrypt                                         # produces .env.backend.enc (keeps plaintext)
-./vibrae env edit-sec                                        # decrypts (if needed), opens editor, re-encrypts (keeps plaintext)
+./vibrae env sync         # create or fill gaps in .env.backend
+./vibrae env edit         # set required values (SECRET_KEY, DOMAIN, etc.)
+./vibrae env encrypt      # produce .env.backend.enc (plaintext kept locally)
+./vibrae env edit-sec     # safe cycle: decrypt -> edit -> re-encrypt (plaintext retained)
 ```
-Plaintext retained: use `git add -p` or `git status` to verify it is NOT staged.
+Plaintext is intentionally retained for iterative development; never commit it.
 
-#### Frontend secret workflow
+#### Frontend secret/public workflow
 ```bash
-cp config/env/.env.frontend.example config/env/.env.frontend || true
-echo "EXPO_PUBLIC_API_URL=https://YOUR_DOMAIN" >> config/env/.env.frontend
-./vibrae env f-encrypt          # keeps plaintext
-./vibrae env f-edit-sec         # re-encrypt after edit (plaintext kept)
+./vibrae env f-sync       # ensure .env.frontend exists
+./vibrae env f-edit       # add EXPO_PUBLIC_* vars
+./vibrae env f-encrypt    # produce .env.frontend.enc
+./vibrae env f-edit-sec   # safe edit cycle (decrypt -> edit -> encrypt)
 ```
 
-#### Decrypt (read‑only to stdout or refresh plaintext)
+#### Decrypt (materialize / refresh plaintext)
 ```bash
 ./vibrae env decrypt      # backend
 ./vibrae env f-decrypt    # frontend
@@ -283,8 +307,7 @@ If plaintext already exists it will just be overwritten with current decrypted c
 Future enhancement (planned): `vibrae env scrub` to securely remove any plaintext envs prior to publishing artifacts.
 
 #### run.sh sourcing summary
-Order: `.env` → `.env.backend` (warn & fallback: `.env.runtime`) → `.env.frontend`.
-Frontend legacy name is NOT sourced automatically; migrate if you still rely on it.
+Order: `.env.backend` (warn & fallback: legacy `.env.runtime*`) → `.env.frontend` → shell exports. Root `.env` is ignored (warning printed if present).
 
 ---
 
@@ -330,11 +353,11 @@ Frontend Logs UI:
 
 ## CLI Usage
 
-Grouped summary (see `vibrae help` for full list):
+Grouped summary (see `vibrae help` or any `command -h` for detailed help):
 
-Core: `start`, `stop`, `restart`, `status`, `logs`, `open`, `url`
-Environment: `env show|edit|set|sync|encrypt|decrypt|edit-sec`
-Database: `db init`
+Core: `start`, `stop`, `restart`, `status`, `logs`, `open`, `url`, `front restart`
+Environment: `env show|edit|set|get|sync|encrypt|decrypt|edit-sec` + frontend `f-show|f-edit|f-set|f-get|f-sync|f-encrypt|f-decrypt|f-edit-sec`
+Database: `db init` (maps internally to `db-init`)
 Music Source: `source detect`, `autostart on|off`
 Diagnostics: `check-env`, `doctor`
 Raspberry Pi: `pi install|start|stop|status|logs`
@@ -358,6 +381,11 @@ Inside interactive shell: `help`, `status`, `logs`, etc. AUTOSTART (if true) tri
 | Encrypt backend / frontend | `vibrae env encrypt` / `vibrae env f-encrypt` |
 | Secure edit backend / frontend | `vibrae env edit-sec` / `vibrae env f-edit-sec` |
 | Decrypt (materialize/update) | `vibrae env decrypt` / `vibrae env f-decrypt` |
+| Frontend show / edit | `vibrae env f-show` / `vibrae env f-edit` |
+| Frontend set one key | `vibrae env f-set KEY=VALUE` |
+| Frontend sync defaults | `vibrae env f-sync` |
+| Show single backend key | `vibrae env get KEY` |
+| Show single frontend key | `vibrae env f-get KEY` |
 | Detect music source | `vibrae source detect` |
 | Toggle autostart | `vibrae autostart on|off` |
 | Initialize database | `vibrae db init` |
@@ -371,9 +399,11 @@ Aliases: `ver`→version, `st`→status, `ce`→check-env, `doc`→doctor, `up`�
 ### Typical First Run Flow
 ```bash
 vibrae install
-vibrae env sync          # ensure recommended keys
+vibrae env sync          # ensure backend file & defaults
+vibrae env f-sync        # ensure frontend defaults
 vibrae env edit          # set SECRET_KEY, DOMAIN, etc.
-vibrae env encrypt       # create .env.backend.enc (plaintext kept)
+vibrae env encrypt       # create backend encrypted blob (optional early)
+vibrae env f-encrypt     # create frontend encrypted blob (optional)
 vibrae db init           # create tables / seed admin
 vibrae start             # launch stack
 vibrae status            # confirm health
@@ -409,15 +439,15 @@ Test decryption without writing plaintext:
 sops --decrypt config/env/.env.backend.enc >/dev/null
 ```
 
-### Adding a New Secret
+### Adding a New Secret / Key
 Backend (plaintext present):
 ```bash
 vibrae env set NEW_KEY=value
-vibrae env encrypt
+vibrae env encrypt        # keep encrypted blob in sync
 ```
 Frontend:
 ```bash
-echo "EXPO_PUBLIC_FEATURE_FLAG=1" >> config/env/.env.frontend
+vibrae env f-set EXPO_PUBLIC_FEATURE_FLAG=1
 vibrae env f-encrypt
 ```
 
@@ -444,6 +474,9 @@ If you want to avoid persisting plaintext post‑pipeline, delete them at end:
 rm -f config/env/.env.backend config/env/.env.frontend
 ```
 
+### Command Help Flags
+Every top‑level command and subcommand accepts `-h` / `--help` (e.g. `vibrae env -h`, `vibrae front restart -h`).
+
 ## Screenshots
 
 
@@ -452,16 +485,42 @@ rm -f config/env/.env.backend config/env/.env.frontend
 ## Testing
 
 ### Overview
-Automated tests cover the refactored playback engine (crossfade, guard window, shutdown) using a lightweight mock of `python-vlc`. This allows fast, deterministic runs with no audio output.
+Automated tests now cover core subsystems:
+
+| Area | File(s) | Focus |
+|------|---------|-------|
+| Player crossfade | `tests/test_player_crossfade.py` | Crossfade loop, guard window, graceful stop |
+| Config resolution | `tests/test_config_paths.py` | Repo root heuristic, music & web dist fallback |
+| DB init | `tests/test_db_init.py` | Idempotent table creation + optional admin seed path |
+| Auth | `tests/test_auth_token.py` | Token encode/decode + password hashing/verify |
+| Scheduler matching | `tests/test_scheduler_match.py` | Routine + scene time-window match logic |
+| CLI surface | `tests/test_cli_version.py` | Basic invocation & version output |
+
+These run fast and rely only on an in-repo SQLite file plus standard libs. VLC functions are mocked so no real audio output occurs.
+
+Optional dependencies:
+* If `passlib` isn't installed, auth tests fall back to a lightweight SHA256-based hasher (still functionally verifies round-trip hashing) or are skipped if import error propagates earlier.
+* If `python-vlc` isn't available, the test fixture supplies a mock module; scheduler tests will skip only if even the mock can't be initialized.
 
 ### Run Tests
-From the project root:
+From the project root (example fresh environment):
 
-```
+```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt  # or: pip install -e .[dev]
 pytest -q
+```
+
+Selective runs:
+```bash
+pytest tests/test_config_paths.py::test_effective_web_dist_fallback -q
+pytest -k scheduler -q
+```
+
+Show slowest 10 tests:
+```bash
+pytest --durations=10 -q
 ```
 
 ### VLC Mock Design
@@ -471,14 +530,19 @@ pytest -q
 - Player state is exercised via the real playback thread; only the media/volume/time functions are simulated.
 
 ### Adding More Tests
-- Use the provided `player_module` fixture to access a freshly reloaded `vibrae_core.player` module that already sees the mock.
-- Instantiate `Player` normally; inject a `notify_cb` to capture events (see `tests/test_player_crossfade.py`).
-- For timing assertions prefer the helper `wait_until(predicate, timeout, poll_interval)` instead of ad‑hoc sleeps.
+Guidelines:
+1. Keep individual tests < 1s wall time (use `wait_until` helper vs. long sleeps).
+2. Use temporary paths (`tmp_path` fixture) when writing files.
+3. Avoid network calls; mock external processes (tunnels, nginx) if/when added.
+4. Prefer pure functions or thin wrappers for new logic to simplify assertions.
+5. Mark integration/slow tests with `@pytest.mark.slow` (none currently) so they can be excluded: `pytest -m 'not slow'`.
+
+Player module note: use the `player_module` fixture (see `tests/conftest.py`) which ensures the VLC mock is loaded before importing the real player code.
 
 ### Customizing Mock Behavior
-Adjust or extend the mock in `tests/conftest.py`:
-- Change track duration returned by `MockMedia.get_duration()` to lengthen or shorten crossfade windows.
-- Add extra state fields if you need to assert intermediate phases.
+Adjust or extend the VLC mock in `tests/conftest.py`:
+* Change `MockMedia.get_duration()` duration for different crossfade scenarios.
+* Add attributes/events to verify intermediate playback states.
 
 ### Using Real VLC (Optional)
 If you want an integration run with real audio:

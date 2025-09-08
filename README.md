@@ -24,8 +24,8 @@
 6. [Environment Variables](#environment-variables)
 7. [Logs & Monitoring](#logs--monitoring)
 8. [CLI Usage](#cli-usage)
-9. [Screenshots](#screenshots)
-10. [Testing](#testing)
+9. [Testing](#testing)
+10. [Screenshots](#screenshots)
 11. [License](#license)
 
 ---
@@ -477,11 +477,6 @@ rm -f config/env/.env.backend config/env/.env.frontend
 ### Command Help Flags
 Every top‑level command and subcommand accepts `-h` / `--help` (e.g. `vibrae env -h`, `vibrae front restart -h`).
 
-## Screenshots
-
-
-
-
 ## Testing
 
 ### Overview
@@ -551,6 +546,18 @@ If you want an integration run with real audio:
 3. Provide actual media files under `music/`.
 
 Keep such runs separate; unit tests should remain fast and silent by default.
+
+---
+
+## Screenshots
+
+Click any thumbnail to view the full-size image.
+
+|  |  |  |
+|:--:|:--:|:--:|
+| <a href="assets/login.png"><img src="assets/login.png" alt="Login" width="260"/></a><br/><sub>Login</sub> | <a href="assets/home.png"><img src="assets/home.png" alt="Home" width="260"/></a><br/><sub>Home</sub> | <a href="assets/routine_list_view.png"><img src="assets/routine_list_view.png" alt="Routine List View" width="260"/></a><br/><sub>Routine List View</sub> |
+| <a href="assets/routine_week_view.png"><img src="assets/routine_week_view.png" alt="Routine Week View" width="260"/></a><br/><sub>Routine Week View</sub> | <a href="assets/routine_creation.png"><img src="assets/routine_creation.png" alt="Routine Creation" width="260"/></a><br/><sub>Routine Creation</sub> | <a href="assets/routine_edit.png"><img src="assets/routine_edit.png" alt="Routine Edit" width="260"/></a><br/><sub>Routine Edit</sub> |
+| &nbsp; | <a href="assets/scene_creation.png"><img src="assets/scene_creation.png" alt="Scene Creation" width="260"/></a><br/><sub>Scene Creation</sub> | &nbsp; |
 
 ---
 

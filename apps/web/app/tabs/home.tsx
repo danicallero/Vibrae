@@ -30,40 +30,63 @@ export default function HomePage() {
   const [scheduleName, setScheduleName] = useState<string | null>(null);
   // Check if a schedule should be playing (for Resume button)
   const checkShouldBePlaying = useCallback(async () => {
+    const toMinutes = (s: any): number | null => {
+      if (typeof s !== "string") return null;
+      const parts = s.trim().split(":");
+      if (parts.length !== 2) return null;
+      const h = Number(parts[0]);
+      const m = Number(parts[1]);
+      if (!Number.isInteger(h) || !Number.isInteger(m)) return null;
+      if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+      return h * 60 + m;
+    };
+
     try {
-  const res = await apiFetch('/schedule/', { method: "GET" });
+      const res = await apiFetch('/schedule/', { method: "GET" });
       const routines = await res.json();
       const now = new Date();
-  const nowStr = now.toTimeString().slice(0, 5); 
+      const nowMin = now.getHours() * 60 + now.getMinutes();
       const weekday = now.toLocaleString("en-US", { weekday: "short" }).toLowerCase().slice(0, 3);
       const month = now.toLocaleString("en-US", { month: "short" }).toLowerCase().slice(0, 3);
+
       let found = false;
-      let name = null;
+      let name: string | null = null;
+
       for (const routine of routines) {
-        const start = routine.start_time;
-        const end = routine.end_time;
-        // Overnight support
-        let inTime = false;
-        if (start < end) {
-          inTime = start <= nowStr && nowStr < end;
-        } else {
-          inTime = nowStr >= start || nowStr < end;
-        }
+        const startMin = toMinutes(routine.start_time);
+        const endMin = toMinutes(routine.end_time);
+        if (startMin === null || endMin === null) continue; // invalid times -> skip
+        if (startMin === endMin) continue; // zero-length window -> skip (matches backend)
+
+        // Time window check with wrap-around support
+        const inTime = startMin < endMin
+          ? (startMin <= nowMin && nowMin < endMin)
+          : (nowMin >= startMin || nowMin < endMin);
         if (!inTime) continue;
+
         // Weekday check
         if (routine.weekdays) {
-          const weekdays = routine.weekdays.split(',').map((w: string) => w.trim().toLowerCase().slice(0, 3)).filter(Boolean);
+          const weekdays = String(routine.weekdays)
+            .split(',')
+            .map((w: string) => w.trim().toLowerCase().slice(0, 3))
+            .filter(Boolean);
           if (!weekdays.includes(weekday)) continue;
         }
+
         // Month check
         if (routine.months) {
-          const months = routine.months.split(',').map((m: string) => m.trim().toLowerCase().slice(0, 3)).filter(Boolean);
+          const months = String(routine.months)
+            .split(',')
+            .map((m: string) => m.trim().toLowerCase().slice(0, 3))
+            .filter(Boolean);
           if (!months.includes(month)) continue;
         }
+
         found = true;
         name = routine.name || `Escena ${routine.scene_id}`;
         break;
       }
+
       setShouldBePlaying(found);
       setScheduleName(name);
       setLoading(false);

@@ -125,14 +125,38 @@ class Scheduler:
             db.close()
 
     def _routine_matches(self, routine: Routine, now: datetime) -> bool:
-        start = routine.start_time
-        end = routine.end_time
-        now_str = now.strftime('%H:%M')
+        def _to_minutes(s: str) -> Optional[int]:
+            try:
+                parts = s.strip().split(":")
+                if len(parts) != 2:
+                    return None
+                h = int(parts[0])
+                m = int(parts[1])
+                if not (0 <= h <= 23 and 0 <= m <= 59):
+                    return None
+                return h * 60 + m
+            except Exception:
+                return None
 
-        if start < end:
-            in_time = start <= now_str < end
+        start_s = routine.start_time or ""
+        end_s = routine.end_time or ""
+        start_min = _to_minutes(start_s)
+        end_min = _to_minutes(end_s)
+        now_min = now.hour * 60 + now.minute
+
+        # If times are invalid, consider no match to be safe
+        if start_min is None or end_min is None:
+            return False
+
+        # Equal start/end means zero-length window; treat as no match (avoid always-on)
+        if start_min == end_min:
+            return False
+
+        if start_min < end_min:
+            in_time = start_min <= now_min < end_min
         else:
-            in_time = now_str >= start or now_str < end
+            # Wrap-around across midnight (e.g., 22:00 -> 06:00)
+            in_time = now_min >= start_min or now_min < end_min
         if not in_time:
             return False
 

@@ -595,6 +595,13 @@ class Player:
 				return
 
 			if not next_started and next_song and elapsed >= fade_start:
+				# If a soft stop is pending, do NOT start a next track; finish current and exit.
+				if self._pending_stop and self._stop_after_song:
+					with self._lock:
+						self._next_index_pending = None
+					logger.info("Pending stop active — will not start next track; finishing current song")
+					next_song = None
+					# The branches below will detect lack of next_song and fade out near end.
 				with self._lock:
 					if self._switch_scene_request is not None:
 						next_song = None

@@ -14,7 +14,6 @@
 #   07 Pi Helpers
 #   08 Interactive Shell
 #   09 Dispatch & Main
-#
 
 ########################################
 ## 00 PRELUDE & GLOBALS
@@ -54,21 +53,44 @@ resolve_self(){
 SCRIPT_PATH="$(resolve_self)"
 ROOT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
 ENV_FILE="$ROOT_DIR/config/env/.env.backend"
+# Example env path (used by ensure_env)
 ENV_EXAMPLE="$ROOT_DIR/config/env/.env.backend.example"
-LOG_DIR="$ROOT_DIR/logs"
+# Default logs directory (can be overridden via environment)
+: "${LOG_DIR:=$ROOT_DIR/logs}"
 
 ########################################
 ## 02 COLORS & OUTPUT HELPERS
 ########################################
-if [ -z "${NO_COLOR:-}" ] && [ -t 1 ] && command -v tput >/dev/null 2>&1 && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
-  BOLD="$(tput bold)"; RESET="$(tput sgr0)";
-  RED="$(tput setaf 1)"; GREEN="$(tput setaf 2)"; YELLOW="$(tput setaf 3)"; BLUE="$(tput setaf 4)"; GREY="$(tput setaf 8)"; CYAN="$(tput setaf 6)"
-else BOLD=""; RESET=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; GREY=""; CYAN=""; fi
-ok(){ printf "%b✔%b %s\n" "$GREEN" "$RESET" "$*"; }
-warn(){ printf "%b!%b %s\n" "$YELLOW" "$RESET" "$*"; }
-err(){ printf "%bx%b %s\n" "$RED" "$RESET" "$*" 1>&2; }
-hdr(){ printf "%b%s%b\n" "$BOLD" "$*" "$RESET"; }
-line(){ printf '%s\n' '--------------------------------------------------'; }
+# Detect terminal support and initialize color/style variables
+if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
+  # Basic ANSI colors via tput; fall back to empty if term lacks colors
+  if [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
+    BOLD="$(tput bold)"; RESET="$(tput sgr0)"
+    RED="$(tput setaf 1)"; GREEN="$(tput setaf 2)"; YELLOW="$(tput setaf 3)"
+    BLUE="$(tput setaf 4)"; CYAN="$(tput setaf 6)"; GREY="$(tput setaf 8 2>/dev/null || tput setaf 7)"
+  else
+    BOLD=""; RESET=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; GREY=""; CYAN=""
+  fi
+else
+  BOLD=""; RESET=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; GREY=""; CYAN=""
+fi
+ok(){ printf "%b%s%b %s\n" "$GREEN" "✔" "$RESET" "$*"; }
+warn(){ printf "%b%s%b %s\n" "$YELLOW" "!" "$RESET" "$*"; }
+err(){ printf "%b%s%b %s\n" "$RED" "✖" "$RESET" "$*" 1>&2; }
+# Styled header and separator for improved readability
+hdr(){ printf "%b%s%s%s%b\n" "$BOLD$CYAN" "" "$*" "" "$RESET"; }
+# Draw a line with subtle grey when available
+line(){
+  local ch
+  if [ -n "$GREY" ]; then
+    ch="─"
+    printf "%b" "$GREY"
+  else
+    ch="-"
+  fi
+  printf '%s\n' "$(printf '%*s' 50 '' | tr ' ' "$ch")"
+  [ -n "$GREY" ] && printf "%b" "$RESET" || true
+}
 section(){ echo; hdr "$1"; line; }
 #banner(){ printf "=== %bVibrae%b — Sound, simplified===\n" "$BOLD" "$RESET"; }
 
@@ -86,11 +108,11 @@ banner(){
     hl='='; vl='|'; tl='+'; tr='+'; bl='+'; br='+';
   fi
   local border; border="$(printf '%s' "$(printf '%*s' "$BANNER_WIDTH" '')" | tr ' ' "$hl")"
-  printf "%b%s%s%s%b\n" "$BOLD" "$tl" "$border" "$tr" "$RESET"
+  printf "%b%s%s%s%b\n" "$BOLD$BLUE" "$tl" "$border" "$tr" "$RESET"
   local pad=$(( (BANNER_WIDTH - ${#title}) / 2 ))
   local pad2=$(( BANNER_WIDTH - pad - ${#title} ))
-  printf "%b%s%*s%s%*s%s%b\n" "$BOLD" "$vl" "$pad" "" "$title" "$pad2" "" "$vl" "$RESET"
-  printf "%b%s%s%s%b\n" "$BOLD" "$bl" "$border" "$br" "$RESET"
+  printf "%b%s%*s%s%*s%s%b\n" "$BOLD$BLUE" "$vl" "$pad" "" "$title" "$pad2" "" "$vl" "$RESET"
+  printf "%b%s%s%s%b\n" "$BOLD$BLUE" "$bl" "$border" "$br" "$RESET"
 }
 HELP_BANNER_SHOWN=""
 help_banner(){ if [ -z "$HELP_BANNER_SHOWN" ]; then banner; HELP_BANNER_SHOWN=1; fi }
@@ -107,9 +129,6 @@ usage(){
   ${BOLD}restart${RESET}             Stop then start
   ${BOLD}status${RESET}              Show service status (process + health)
   ${BOLD}logs${RESET} [name] [n]     Tail logs (backend|player|serve|cloudflared). Default all; n=100
-  ${BOLD}front restart${RESET}       Restart only static server
-  ${BOLD}open${RESET}                Open web UI
-  ${BOLD}url${RESET}                 Print local/public URLs
 EOF
   section "Environment & Secrets"; cat <<EOF
   ${BOLD}env show${RESET}            Print .env (aliases: env ls, env cat)
@@ -133,9 +152,18 @@ EOF
   ${BOLD}check-env${RESET}           Validate .env values
   ${BOLD}doctor${RESET}              Check required tools & deps
 EOF
+  section "Frontend"; cat <<EOF
+  ${BOLD}front restart${RESET}       Restart only static server
+  ${BOLD}front build|export${RESET}  Build/export static web (Expo)
+  ${BOLD}front-build${RESET}         Build/export static web (Expo) [alias]
+EOF
+  section "Web & URLs"; cat <<EOF
+  ${BOLD}open${RESET}                Open web UI
+  ${BOLD}url${RESET}                 Print local/public URLs
+EOF
   section "Aliases"; cat <<EOF
   ahelp                  Show alias list
-  ver -> version         st -> status
+  st  -> status          ce -> check-env
   ce  -> check-env       doc -> doctor
   sh  -> shell           ls-env|env ls|env cat -> env show
   env get KEY            Print single env value
@@ -202,6 +230,22 @@ run_script(){
   (cd "$ROOT_DIR" && bash "$candidate")
 }
 
+# Colorize common bracketed tags from external script output
+colorize_stream(){
+  # Only colorize when stdout is a TTY; otherwise pass through
+  if [ -t 1 ]; then
+  awk -v G="$GREEN" -v Y="$YELLOW" -v C="$CYAN" -v R="$RED" -v RST="$RESET" '
+      { line=$0;
+    gsub(/\[ok\]/,    G "[ok]" RST, line);
+    gsub(/\[warn\]/,  Y "[warn]" RST, line);
+    gsub(/\[info\]/,  C "[info]" RST, line);
+    gsub(/\[error\]/, R "[error]" RST, line);
+        print line;
+      }'
+  else
+    cat
+  fi
+}
 kv_set(){ local key="$1" val="$2" tmp; ensure_env; tmp="$(mktemp 2>/dev/null || true)"; [ -n "$tmp" ] || tmp="${ENV_FILE}.tmp.$$"; awk -v K="$key" -v V="$val" 'BEGIN{ set=0 } /^[#[:space:]]/ { print; next } $0 ~ "^"K"=" { if(!set){ print K"="V; set=1 } ; next } { print } END{ if(!set) print K"="V }' "$ENV_FILE" > "$tmp" && mv "$tmp" "$ENV_FILE"; }
 kv_get(){ local key="$1"; [ -f "$ENV_FILE" ] || return 1; grep -E "^${key}=" "$ENV_FILE" | head -n1 | sed -E "s/^${key}=//"; }
 
@@ -254,60 +298,138 @@ cmd_status(){
 
   # Frontend mode detection (process-level)
   local mode="backend"
-  if echo "$psout" | grep -E "(serve -s|npx serve)" >/dev/null; then mode="npx"; fi
-  printf "\nFrontend: %s\n" "$mode"
-
-  # Health via backend
-  local api_url="http://127.0.0.1/api/health"
-  local json; json="$(curl -s --max-time 1 "$api_url" 2>/dev/null || echo '')"
-  if [ -n "$json" ]; then
-    local backend fe fe_mode player proxy cf fe_srv
-    backend=$(echo "$json" | sed -n 's/.*"backend"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-    fe=$(echo "$json" | sed -n 's/.*"frontend"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-    fe_mode=$(echo "$json" | sed -n 's/.*"frontend_mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-    player=$(echo "$json" | sed -n 's/.*"player"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-    proxy=$(echo "$json" | sed -n 's/.*"proxy"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-    cf=$(echo "$json" | sed -n 's/.*"cloudflared"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-    fe_srv=$(echo "$json" | sed -n 's/.*"frontend_server"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-
-    # If backend reports frontend as unknown, try to derive from local process view
-    if [ -z "$fe" ] || [ "$fe" = "unknown" ]; then
-      if [ "$mode" = "npx" ]; then fe="served"; fe_mode="npx";
-      elif echo "$psout" | grep -E "nginx" >/dev/null; then fe="nginx"; fe_mode="nginx";
-      else fe="backend"; fi
+    if echo "$psout" | grep -E "(serve -s|npx serve)" >/dev/null; then mode="npx"; fi
+  
+    printf "\nFrontend: %s\n" "$mode"
+  
+    # Health via backend
+    local api_url="http://127.0.0.1/api/health"
+    local json; json="$(curl -s --max-time 1 "$api_url" 2>/dev/null || echo '')"
+    if [ -n "$json" ]; then
+      local backend fe fe_mode player proxy cf fe_srv
+      backend=$(echo "$json" | sed -n 's/.*"backend"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+      fe=$(echo "$json" | sed -n 's/.*"frontend"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+      fe_mode=$(echo "$json" | sed -n 's/.*"frontend_mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+      player=$(echo "$json" | sed -n 's/.*"player"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+      proxy=$(echo "$json" | sed -n 's/.*"proxy"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+      cf=$(echo "$json" | sed -n 's/.*"cloudflared"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+      fe_srv=$(echo "$json" | sed -n 's/.*"frontend_server"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+  
+      # If backend reports frontend as unknown, try to derive from local process view
+      if [ -z "$fe" ] || [ "$fe" = "unknown" ]; then
+        if [ "$mode" = "npx" ]; then fe="served"; fe_mode="npx";
+        elif echo "$psout" | grep -E "nginx" >/dev/null; then fe="nginx"; fe_mode="nginx";
+        else fe="backend"; fi
+      fi
+  
+      section "Health"
+      # Backend
+      if [ "$backend" = "ok" ]; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Backend" "running"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Backend" "stopped"; fi
+      # Player
+      if [ "$player" = "running" ]; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Player" "running"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Player" "idle"; fi
+      # Frontend
+      local fe_label
+      if [ -n "${fe:-}" ] && [ "${fe}" != "unknown" ]; then
+        fe_label="good"
+        printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Frontend" "${fe_label} (mode=${fe_mode:-$mode})"
+      else
+        fe_label="unknown"
+        printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Frontend" "${fe_label}"
+      fi
+      # Proxy
+      printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Proxy" "${proxy:-unknown}"
+      # Tunnel
+      printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Tunnel" "${cf:-unknown}"
+    else
+      # API unreachable -> present a helpful fallback Health view based on processes
+      section "Health"
+      # Backend: check uvicorn process
+      if echo "$psout" | grep -E "uvicorn" | grep -v grep >/dev/null; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Backend" "running"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Backend" "stopped"; fi
+      # Player: best-effort unknown/idle
+      printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Player" "unknown (API unreachable)"
+      # Frontend: derive from process-level mode detection and mark as good when likely healthy
+      if [ "$mode" = "npx" ]; then
+        printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Frontend" "good (mode=npx)"
+      elif echo "$psout" | grep -E "nginx" >/dev/null; then
+        printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Frontend" "good (mode=nginx)"
+      elif echo "$psout" | grep -E "uvicorn" | grep -v grep >/dev/null; then
+        printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Frontend" "good (mode=backend)"
+      else
+        printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Frontend" "unknown"
+      fi
+      # Proxy
+      if echo "$psout" | grep -E "nginx" >/dev/null; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Proxy" "nginx"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Proxy" "none"; fi
+      # Tunnel
+      if echo "$psout" | grep -E "cloudflared" >/dev/null; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Tunnel" "enabled"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Tunnel" "disabled"; fi
+      printf "\nAPI (/api/health): unreachable\n"
     fi
+  # (Removed duplicated Frontend/Health section)
+}
 
-    section "Health"
-    # Backend
-    if [ "$backend" = "ok" ]; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Backend" "running"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Backend" "stopped"; fi
-    # Player
-    if [ "$player" = "running" ]; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Player" "running"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Player" "idle"; fi
-    # Frontend
-    printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Frontend" "${fe:-unknown} (mode=${fe_mode:-$mode}, static=${fe_srv:-})"
-    # Proxy
-    printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Proxy" "${proxy:-unknown}"
-    # Tunnel
-    printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Tunnel" "${cf:-unknown}"
+cmd_logs(){
+  mkdir -p "$LOG_DIR" 2>/dev/null || true
+  local name="$1"; shift || true
+  local lines="${1:-100}"
+
+  if [ -z "$name" ]; then
+    for f in backend player serve cloudflared; do
+      section "$f.log"
+      tail -n "$lines" "$LOG_DIR/$f.log" 2>/dev/null | colorize_stream || warn "no $f.log"
+      echo
+    done
   else
-    # API unreachable -> present a helpful fallback Health view based on processes
-    section "Health"
-    # Backend: check uvicorn process
-    if echo "$psout" | grep -E "uvicorn" | grep -v grep >/dev/null; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Backend" "running"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Backend" "stopped"; fi
-    # Player: best-effort unknown/idle
-    printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Player" "unknown (API unreachable)"
-    # Frontend: derive from process-level mode detection
-    if [ "$mode" = "npx" ]; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Frontend" "served (mode=npx)"; elif echo "$psout" | grep -E "nginx" >/dev/null; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Frontend" "nginx"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Frontend" "backend"; fi
-    # Proxy
-    if echo "$psout" | grep -E "nginx" >/dev/null; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Proxy" "nginx"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Proxy" "none"; fi
-    # Tunnel
-    if echo "$psout" | grep -E "cloudflared" >/dev/null; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Tunnel" "enabled"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Tunnel" "disabled"; fi
-    printf "\nAPI (/api/health): unreachable\n"
+    section "$name.log"
+    tail -n "$lines" "$LOG_DIR/$name.log" 2>/dev/null | colorize_stream || err "no such log: $name"
   fi
 }
 
-cmd_logs(){ mkdir -p "$LOG_DIR" 2>/dev/null || true; local name="$1"; shift || true; local lines="${1:-100}"; if [ -z "$name" ]; then for f in backend player serve cloudflared; do hdr "$f.log"; tail -n "$lines" "$LOG_DIR/$f.log" 2>/dev/null || warn "no $f.log"; echo; done; else hdr "$name.log"; tail -n "$lines" "$LOG_DIR/$name.log" 2>/dev/null || err "no such log: $name"; fi }
+cmd_front_restart(){
+  case "${1-}" in -h|--help|help) _help_front_restart; return 0;; esac
+  banner; section "Frontend restart"
+  pkill -f "(serve -s|npx serve)" >/dev/null 2>&1 || true
+  sleep 0.5
+  FRONTEND_DIST_VAL="$(kv_get FRONTEND_DIST)"; [ -n "$FRONTEND_DIST_VAL" ] || FRONTEND_DIST_VAL="/apps/web/dist"
+  SERVE_ROOT="$ROOT_DIR$FRONTEND_DIST_VAL"
+  PORT_VAL="$(kv_get FRONTEND_PORT)"; [ -n "$PORT_VAL" ] || PORT_VAL=9081
+  if command -v npx >/dev/null 2>&1 && [ -d "$SERVE_ROOT" ]; then
+    mkdir -p "$LOG_DIR" 2>/dev/null || true
+    echo "----- $(date) front restart on :$PORT_VAL -----" >> "$LOG_DIR/serve.log"
+    (cd "$ROOT_DIR" && FRONTEND_MODE=npx nohup npx serve -s "$SERVE_ROOT" -l "$PORT_VAL" >> "$LOG_DIR/serve.log" 2>&1 &)
+    ok "frontend restarted on :$PORT_VAL (mode=npx)"
+  else
+    warn "npx or export missing; backend will serve static files if available"
+  fi
+}
 
-cmd_front_restart(){ banner; hdr "Frontend restart"; pkill -f "(serve -s|npx serve)" >/dev/null 2>&1 || true; sleep 0.5; FRONTEND_DIST_VAL="$(kv_get FRONTEND_DIST)"; [ -n "$FRONTEND_DIST_VAL" ] || FRONTEND_DIST_VAL="/apps/web/dist"; SERVE_ROOT="$ROOT_DIR$FRONTEND_DIST_VAL"; PORT_VAL="$(kv_get FRONTEND_PORT)"; [ -n "$PORT_VAL" ] || PORT_VAL=9081; if command -v npx >/dev/null 2>&1 && [ -d "$SERVE_ROOT" ]; then mkdir -p "$LOG_DIR" 2>/dev/null || true; echo "----- $(date) front restart on :$PORT_VAL -----" >> "$LOG_DIR/serve.log"; (cd "$ROOT_DIR" && FRONTEND_MODE=npx nohup npx serve -s "$SERVE_ROOT" -l "$PORT_VAL" >> "$LOG_DIR/serve.log" 2>&1 &); ok "frontend restarted on :$PORT_VAL (mode=npx)"; else warn "npx or export missing; backend will serve static files if available"; fi }
+cmd_front_build(){
+  case "${1-}" in -h|--help|help) _help_front_build; return 0;; esac
+  banner; section "Frontend build"
+  local APP_DIR="$ROOT_DIR/apps/web"
+  if [ ! -d "$APP_DIR" ]; then err "apps/web not found"; return 1; fi
+  if ! command -v node >/dev/null 2>&1 || ! command -v npx >/dev/null 2>&1; then err "node/npm (npx) not found. Install Node.js."; return 1; fi
+  local do_restart=0
+  case "${1-}" in --restart|-r) do_restart=1;; esac
+  # Stop static server while rebuilding to avoid serving partial files
+  section "Stopping static server (if running)"
+  pkill -f "(serve -s|npx serve)" >/dev/null 2>&1 || true
+  sleep 0.5
+  # Install deps if node_modules missing
+  if [ ! -d "$APP_DIR/node_modules" ]; then
+    section "Installing frontend dependencies (npm ci)"
+    (cd "$APP_DIR" && npm ci) || { err "npm ci failed"; return 1; }
+  fi
+  section "Exporting static web build (expo export)"
+  (cd "$APP_DIR" && npx expo export --platform web) || { err "expo export failed"; return 1; }
+  # Verify build output exists
+  local FRONTEND_DIST_VAL; FRONTEND_DIST_VAL="$(kv_get FRONTEND_DIST)"; [ -n "$FRONTEND_DIST_VAL" ] || FRONTEND_DIST_VAL="/apps/web/dist"
+  local SERVE_ROOT="$ROOT_DIR$FRONTEND_DIST_VAL"
+  if [ -d "$SERVE_ROOT" ]; then ok "build ready at $FRONTEND_DIST_VAL"; else warn "build output not found at $FRONTEND_DIST_VAL"; fi
+  if [ $do_restart -eq 1 ]; then
+    cmd_front_restart
+  else
+    echo "Tip: run 'vibrae front restart' to serve the new build."
+  fi
+}
 
 cmd_github(){
   local url="https://github.com/danicallero/Vibrae"
@@ -325,8 +447,24 @@ _resolve_urls(){
   # If nginx listens on 80 we consider it the canonical local entry; else fallback to static
   printf 'LOCAL_CANONICAL=http://127.0.0.1:%s\n' "${NGINX_PORT:-80}"
 }
-cmd_open(){ local kvs url; kvs="$(_resolve_urls)"; url="$(printf '%s' "$kvs" | awk -F= '/PUBLIC_URL=/{print $2;exit}')"; if [ -z "$url" ]; then url="$(printf '%s' "$kvs" | awk -F= '/LOCAL_STATIC=/{print $2;exit}')"; fi; if [[ "$(uname)" == "Darwin" ]]; then open "$url"; else xdg-open "$url" 2>/dev/null || echo "$url"; fi }
-cmd_url(){ local kvs; kvs="$(_resolve_urls)"; echo "$kvs" | sed 's/^/  /'; }
+cmd_open(){
+  local kvs url
+  kvs="$(_resolve_urls)"
+  url="$(printf '%s' "$kvs" | awk -F= '/PUBLIC_URL=/{print $2;exit}')"
+  if [ -z "$url" ]; then
+    url="$(printf '%s' "$kvs" | awk -F= '/LOCAL_STATIC=/{print $2;exit}')"
+  fi
+  if [[ "$(uname)" == "Darwin" ]]; then
+    open "$url"
+  else
+    xdg-open "$url" 2>/dev/null || echo "$url"
+  fi
+}
+cmd_url(){
+  local kvs
+  kvs="$(_resolve_urls)"
+  echo "$kvs" | sed 's/^/  /'
+}
 
 cmd_env_show(){ ensure_env; cat "$ENV_FILE"; }
 cmd_env_edit(){ ensure_env; if [[ "$(uname)" == "Darwin" ]] && [ -z "${EDITOR}${VISUAL}" ]; then open -e "$ENV_FILE"; else ${EDITOR:-${VISUAL:-nano}} "$ENV_FILE"; fi }
@@ -430,14 +568,51 @@ CLOUDFLARE_TUNNEL_TOKEN=
 DEFEOF
 ); local added=0; while IFS= read -r line; do [ -z "$line" ] && continue; local key="${line%%=*}" val="${line#*=}"; if ! grep -qE "^${key}=" "$ENV_FILE" 2>/dev/null; then echo "${key}=${val}" >> "$ENV_FILE"; added=$((added+1)); fi; done <<< "$defaults"; [ $added -gt 0 ] && ok "Added $added missing keys" || ok ".env already has recommended keys"; }
 
-cmd_autostart(){ case "$1" in on) kv_set AUTOSTART true; ok "AUTOSTART=true";; off) kv_set AUTOSTART false; ok "AUTOSTART=false";; *) err "usage: vibrae autostart on|off"; return 1;; esac }
+cmd_autostart(){
+  case "$1" in
+    on)
+      kv_set AUTOSTART true
+      ok "AUTOSTART=true"
+      ;;
+    off)
+      kv_set AUTOSTART false
+      ok "AUTOSTART=false"
+      ;;
+    *)
+      err "usage: vibrae autostart on|off"
+      return 1
+      ;;
+  esac
+}
 
-cmd_source_detect(){ ensure_env; local mode dir label; mode="$(kv_get MUSIC_SOURCE_MODE)"; [ -n "$mode" ] || mode="$(kv_get MUSIC_MODE)"; [ -n "$mode" ] || mode="folder"; dir="$(kv_get MUSIC_DIR)"; [ -n "$dir" ] || dir="music"; label="$(kv_get VIBRAE_MUSIC)"; [ -n "$label" ] || label="$(kv_get USB_VOLUME_LABEL)"; if [ -z "$label" ] && [ "$mode" = "usb" ]; then warn "VIBRAE_MUSIC not set (USB volume label). USB_VOLUME_LABEL is deprecated; set VIBRAE_MUSIC instead."; fi; if [ "$mode" = "usb" ]; then [ -n "$label" ] && echo "usb:$label" || echo "usb:(no label)"; else echo "folder:$dir"; fi }
+cmd_source_detect(){
+  ensure_env
+  local mode dir label
+  mode="$(kv_get MUSIC_SOURCE_MODE)"; [ -n "$mode" ] || mode="$(kv_get MUSIC_MODE)"; [ -n "$mode" ] || mode="folder"
+  dir="$(kv_get MUSIC_DIR)"; [ -n "$dir" ] || dir="music"
+  label="$(kv_get VIBRAE_MUSIC)"; [ -n "$label" ] || label="$(kv_get USB_VOLUME_LABEL)"
+
+  if [ -z "$label" ] && [ "$mode" = "usb" ]; then
+    warn "VIBRAE_MUSIC not set (USB volume label). USB_VOLUME_LABEL is deprecated; set VIBRAE_MUSIC instead."
+  fi
+  if [ "$mode" = "usb" ]; then
+    [ -n "$label" ] && echo "usb:$label" || echo "usb:(no label)"
+  else
+    echo "folder:$dir"
+  fi
+}
 
 cmd_check_env(){ banner; ensure_env; local ENC_FILE="${ENV_FILE}.enc"; if [ -f "$ENC_FILE" ]; then if [ ! -f "$ENV_FILE" ]; then warn "cannot validate keys until you decrypt the backend env"; echo "Run: vibrae env decrypt"; return 2; fi; if [ "$ENC_FILE" -nt "$ENV_FILE" ]; then warn "encrypted backend env is newer than plaintext; run: vibrae env decrypt"; else ok "encrypted backend env detected (plaintext appears current)"; fi; fi; local issues=0; _VIBRAE_SUPPRESS_TRAP=1; check(){ local k="$1" msg="$2" v; v="$(kv_get "$k" || true)"; if [ -z "${v}" ]; then issues=$((issues+1)); printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "$k" "$msg"; fi; }; check SECRET_KEY "JWT signing secret is required"; check BACKEND_PORT "defaults to 8000 if unset"; check FRONTEND_PORT "defaults to 9081 if unset"; check FRONTEND_DIST "path to exported web (default /apps/web/dist)"; local mode; mode="$(kv_get MUSIC_MODE || true)"; [ -z "$mode" ] && mode="$(kv_get MUSIC_SOURCE_MODE || true)"; if [ -z "$mode" ]; then printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "MUSIC_MODE" "folder|usb (default folder)"; issues=$((issues+1)); fi; if [ "$mode" = "usb" ]; then local label; label="$(kv_get USB_VOLUME_LABEL || true)"; [ -z "$label" ] && label="$(kv_get VIBRAE_MUSIC || true)"; [ -z "$label" ] && printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "VIBRAE_MUSIC" "USB volume label or absolute mount path"; fi; local tunnel; tunnel="$(kv_get TUNNEL || true)"; [ -z "$tunnel" ] && tunnel="cloudflared"; if [ "$tunnel" = "cloudflared" ]; then local tok; tok="$(kv_get CLOUDFLARE_TUNNEL_TOKEN || true)"; [ -z "$tok" ] && printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "CLOUDFLARE_TUNNEL_TOKEN" "required when TUNNEL=cloudflared"; fi; unset _VIBRAE_SUPPRESS_TRAP; [ $issues -eq 0 ] && ok "env looks good" || warn "$issues item(s) to review"; }
 
 cmd_doctor(){ banner; hdr "Tools"; command -v python3 >/dev/null && ok "python3" || err "python3 MISSING"; command -v pip >/dev/null && ok "pip" || err "pip MISSING"; command -v node >/dev/null && ok "node" || warn "node not found (frontend optional)"; command -v npm >/dev/null && ok "npm" || warn "npm not found (frontend optional)"; command -v nginx >/dev/null && ok "nginx" || warn "nginx not found (reverse proxy optional)"; command -v cloudflared >/dev/null && ok "cloudflared" || warn "cloudflared not found (public URL optional)"; if [[ "$(uname)" == "Darwin" ]]; then command -v brew >/dev/null && ok "brew" || warn "brew not found (auto-install skipped)"; fi; hdr "Python"; if [ -d "$ROOT_DIR/venv" ]; then "$ROOT_DIR/venv/bin/python" - <<'PY'
-import sys
+import sys, os
+USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+def color(code, s):
+  return f"\033[{code}m{s}\033[0m" if USE_COLOR else s
+def ok(msg):
+  print(f"{color('32','[ok]')} {msg}")
+def warn(msg):
+  print(f"{color('33','[warn]')} {msg}")
 mods=["fastapi","uvicorn","sqlalchemy","pydantic","jose","python_dotenv","websockets","vlc"]
 missing=[]
 for m in mods:
@@ -446,16 +621,16 @@ for m in mods:
   except Exception:
     missing.append(m)
 if missing:
-  print("[warn] missing modules:", ", ".join(missing))
+  warn("missing modules: " + ", ".join(missing))
 else:
-  print("[ok] Python deps present")
+  ok("Python deps present")
 try:
   import vlc
   try:
     _=vlc.Instance()
-    print("[ok] libVLC available")
+    ok("libVLC available")
   except Exception:
-    print("[warn] libVLC not available; install VLC media player")
+    warn("libVLC not available; install VLC media player")
 except Exception:
   pass
 PY
@@ -466,9 +641,9 @@ PY
 ## 06 PI HELPERS
 ########################################
 is_pi(){ [ -f /etc/raspberrypi-release ] || grep -qi 'raspberry' /proc/cpuinfo 2>/dev/null || grep -qi 'raspi' /proc/cpuinfo 2>/dev/null; }
-cmd_pi_install(){ license_notice; if ! is_pi; then warn "Not a Raspberry Pi (continuing anyway)"; fi; sudo bash "$ROOT_DIR/scripts/pi/setup.sh"; }
-cmd_pi_start(){ license_notice; [ -f "$ROOT_DIR/.installed" ] || warn "setup has not been run locally; proceeding with Pi systemd start"; sudo bash "$ROOT_DIR/scripts/pi/run.sh"; }
-cmd_pi_stop(){ license_notice; sudo bash "$ROOT_DIR/scripts/pi/stop.sh"; }
+cmd_pi_install(){ license_notice; if ! is_pi; then warn "Not a Raspberry Pi (continuing anyway)"; fi; sudo bash "$ROOT_DIR/scripts/pi/setup.sh" | colorize_stream; }
+cmd_pi_start(){ license_notice; [ -f "$ROOT_DIR/.installed" ] || warn "setup has not been run locally; proceeding with Pi systemd start"; sudo bash "$ROOT_DIR/scripts/pi/run.sh" | colorize_stream; }
+cmd_pi_stop(){ license_notice; sudo bash "$ROOT_DIR/scripts/pi/stop.sh" | colorize_stream; }
 cmd_pi_status(){ banner; systemctl --no-pager status vibrae-backend vibrae-frontend vibrae-cloudflared || true; }
 cmd_pi_logs(){ local unit="${1:-vibrae-backend}"; journalctl -u "$unit" -f; }
 
@@ -498,7 +673,9 @@ _is_registered(){
     return 1
   fi
 }
-_list_commands(){ printf '%s' "$_COMMANDS" | awk -F'|' 'NF>=3 {printf "  %-16s %s\n", $1, $3}' | sort; }
+# List unique primary commands only (dedupe aliases)
+# We consider the first occurrence of a function as the primary entry
+## Unused helpers removed: _list_commands and _list_commands_by_category
 
 # Register primary commands
 _register version    cmd_version        "Show CLI version"
@@ -513,6 +690,7 @@ _register st         cmd_status         "Alias for status"
 _register logs       cmd_logs           "Tail logs"
 _register front-restart cmd_front_restart "Restart static frontend server"
 _register front       cmd_front_root     "Frontend operations"
+_register front-build cmd_front_build    "Build/export static frontend"
 _register open       cmd_open           "Open primary URL"
 _register url        cmd_url            "Print URLs"
 _register contact    contact_information "Contact info"
@@ -634,7 +812,8 @@ HFR
 cmd_front_root(){
   case "${1-}" in
     -h|--help|help|'') _help_front; return 0;;
-    restart) shift; cmd_front_restart;;
+  restart) shift; cmd_front_restart "$@";;
+  build|export|rebuild) shift; cmd_front_build "$@";;
     *) err "front: unknown subcommand '${1-}'"; _help_front; return 1;;
   esac
 }
@@ -643,13 +822,28 @@ _help_front(){ help_banner; section "Frontend"; cat <<'HF'
 
   Subcommands:
     restart            Restart static server (npx serve) only
+  build|export       Rebuild static web (Expo export)
 
   Notes:
     - Not for env operations (use: vibrae env ...)
     - Falls back to backend static serving if npx serve missing
+  - Use 'vibrae front build --restart' to rebuild and restart in one step
 HF
 }
-cmd_help(){ usage; echo "Commands:"; _list_commands; echo; }
+_help_front_build(){ help_banner; section "Front Build"; cat <<'HFB'
+  Usage: vibrae front build [--restart|-r]
+
+  Runs Expo web export in apps/web:
+  - Stops the static server during the build (if running)
+    - Installs dependencies (npm ci) if node_modules is missing
+    - Executes: npx expo export --platform web
+    - Places output at FRONTEND_DIST (default /apps/web/dist)
+
+  Options:
+    --restart, -r   After building, restart the static server (same as 'vibrae front restart')
+HFB
+}
+cmd_help(){ usage; }
 _show_cmd_help(){ HELP_BANNER_SHOWN=""; local c="$1"; local helper="_help_${c//-/_}"; if command -v "$helper" >/dev/null 2>&1; then "$helper"; else err "No detailed help for '$c'"; fi }
 
 dispatch(){
@@ -657,8 +851,12 @@ dispatch(){
   if [ -z "$cmd" ]; then
     if [ ! -f "$ROOT_DIR/.installed" ] || [ ! -d "$ROOT_DIR/venv" ]; then onboarding_message; return 0; else run_interactive; return 0; fi
   fi
-  # Backward compatibility: map "front restart" to front group handling
-  if [ "$cmd" = "front" ] && [ "${2-}" = "restart" ]; then shift; set -- restart "$@"; fi
+  # Map 'restart -front' or 'restart front' to frontend-only restart
+  if [ "$cmd" = "restart" ] && { [ "${2-}" = "-front" ] || [ "${2-}" = "front" ]; }; then
+    cmd="front"
+    # Preserve any additional flags (e.g., -h) when remapping
+    set -- front restart "${@:3}"
+  fi
   # Map db init -> db-init
   if [ "$cmd" = "db" ] && [ "${2-}" = "init" ]; then shift; cmd="db-init"; shift || true; fi
   # Source detect -> source-detect

@@ -192,6 +192,14 @@ disown -a 2>/dev/null || true
 OS_TYPE=$(uname)
 if [[ "$OS_TYPE" == "Darwin" ]]; then
   info "nginx (macOS): start"
+  # Allow explicit opt-out via env: NGINX_ENABLE=0|false|no
+  case "${NGINX_ENABLE:-auto}" in
+    0|false|no|False|NO)
+      warn "nginx disabled via NGINX_ENABLE; skipping nginx startup"
+      START_NGINX=0
+      ;;
+    *) : ;; 
+  esac
   if ! command -v nginx >/dev/null 2>&1; then
     warn "nginx not installed; skipping reverse proxy on macOS."
   else

@@ -26,13 +26,41 @@ try:  # Optional dependency; provide lightweight fallback for test environments
     from passlib.context import CryptContext  # type: ignore
 except Exception:  # pragma: no cover
     class _DummyHasher:
+        """Fallback hasher using PBKDF2-HMAC(SHA-256) if passlib is unavailable.
+
+        Uses static salt and iteration count from env for test determinism.
+        Also supports legacy SHA-256(salt+password) hashes for backward compatibility.
+        """
+
+        def __init__(self) -> None:
+            self._salt = os.getenv("VIBRAE_HASH_SALT", "static-test-salt").encode()
+            # Reasonable default for CPU-only tests; production should use passlib/bcrypt
+            self._iterations = int(os.getenv("VIBRAE_PBKDF2_ITERATIONS", "200000"))
+
         def hash(self, password: str) -> str:
             import hashlib
-            salt = os.getenv("VIBRAE_HASH_SALT", "static-test-salt").encode()
-            return hashlib.sha256(salt + password.encode()).hexdigest()
+            dk = hashlib.pbkdf2_hmac(
+                "sha256", password.encode(), self._salt, self._iterations
+            )
+            return f"pbkdf2_sha256${self._iterations}${self._salt.hex()}${dk.hex()}"
 
         def verify(self, plain: str, hashed: str) -> bool:
-            return self.hash(plain) == hashed
+            import hashlib
+            # Try to parse our PBKDF2 format first
+            try:
+                algo, iters_s, salt_hex, dk_hex = hashed.split("$", 3)
+                if algo == "pbkdf2_sha256":
+                    iters = int(iters_s)
+                    salt = bytes.fromhex(salt_hex)
+                    dk = hashlib.pbkdf2_hmac("sha256", plain.encode(), salt, iters)
+                    return dk.hex() == dk_hex
+            except ValueError:
+                # fall back to legacy check
+                pass
+
+            # Back-compat: legacy plain SHA-256(salt+password) hex digest
+            legacy = hashlib.sha256(self._salt + plain.encode()).hexdigest()
+            return legacy == hashed
 
     class CryptContext:  # type: ignore
         def __init__(self, *a, **kw):

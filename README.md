@@ -494,7 +494,7 @@ Automated tests now cover core subsystems:
 These run fast and rely only on an in-repo SQLite file plus standard libs. VLC functions are mocked so no real audio output occurs.
 
 Optional dependencies:
-* If `passlib` isn't installed, auth tests fall back to a lightweight SHA256-based hasher (still functionally verifies round-trip hashing) or are skipped if import error propagates earlier.
+* If `passlib` isn't installed, auth tests fall back to a lightweight PBKDF2‑HMAC(SHA‑256) hasher with a static salt for deterministic runs, configurable via env. This preserves round‑trip verification in minimal environments.
 * If `python-vlc` isn't available, the test fixture supplies a mock module; scheduler tests will skip only if even the mock can't be initialized.
 
 ### Run Tests

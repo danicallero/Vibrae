@@ -12,6 +12,7 @@
 #   05 Encryption (sops helpers)
 #   06 Commands (install/start/stop/...)
 #   07 Pi Helpers
+#   07b Mac Helpers
 #   08 Interactive Shell
 #   09 Dispatch & Main
 
@@ -140,7 +141,10 @@ license_notice(){ printf "%bVibrae%b (GPLv3, no warranty)\n" "$BOLD" "$RESET"; }
 contact_information(){ printf "%bContact%b\n" "$BOLD" "$RESET"; printf "Issues: GitHub repo (./vibrae github). Email: vibrae@danicallero.es\n"; }
 
 usage(){
-  banner; section "Core"; cat <<EOF
+  banner
+  echo "Note: Commands are cross-platform (macOS/Linux, incl. Pi) unless listed under 'Raspberry Pi' or 'macOS' helpers."
+  echo
+  section "Core"; cat <<EOF
   ${BOLD}version${RESET}             Show CLI version
   ${BOLD}install${RESET}             Install/update dependencies (scripts/app/setup.sh)
   ${BOLD}start${RESET} | up          Start all services (run.sh)
@@ -187,10 +191,15 @@ EOF
   sh  -> shell           ls-env|env ls|env cat -> env show
   env get KEY            Print single env value
 EOF
-  section "Raspberry Pi"; cat <<EOF
-  ${BOLD}pi install${RESET}          Pi setup (systemd, nginx)
-  ${BOLD}pi start|stop|status${RESET} Manage Pi services
-  ${BOLD}pi logs${RESET} [unit]      Tail journal for a unit
+  section "Systemd (Linux)"; cat <<EOF
+  ${BOLD}systemd install${RESET}     Setup services (systemd, nginx)
+  ${BOLD}systemd start|stop|status${RESET} Manage services via systemd
+  ${BOLD}systemd logs${RESET} [unit] Tail journal for a unit
+  ${BOLD}systemd sudoers${RESET}     Add passwordless sudoers
+  (aliases: ${BOLD}sys${RESET}, ${BOLD}pi${RESET})
+EOF
+  section "macOS (helpers)"; cat <<EOF
+  ${BOLD}mac sudoers${RESET}         Add passwordless sudoers
 EOF
   section "Misc"; cat <<EOF
   ${BOLD}shell${RESET}               Interactive shell
@@ -382,7 +391,6 @@ cmd_status(){
       if echo "$psout" | grep -E "cloudflared" >/dev/null; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Tunnel" "enabled"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Tunnel" "disabled"; fi
       printf "\nAPI (/api/health): unreachable\n"
     fi
-  # (Removed duplicated Frontend/Health section)
 }
 
 cmd_logs(){
@@ -592,10 +600,21 @@ cmd_autostart(){
     on)
       kv_set AUTOSTART true
       ok "AUTOSTART=true"
+      # Re-encrypt backend env so .enc stays current
+      if command -v sops >/dev/null 2>&1; then
+        cmd_env_encrypt || warn "re-encrypt failed; run 'vibrae env encrypt' manually"
+      else
+        warn "sops not installed; skipping re-encrypt"
+      fi
       ;;
     off)
       kv_set AUTOSTART false
       ok "AUTOSTART=false"
+      if command -v sops >/dev/null 2>&1; then
+        cmd_env_encrypt || warn "re-encrypt failed; run 'vibrae env encrypt' manually"
+      else
+        warn "sops not installed; skipping re-encrypt"
+      fi
       ;;
     *)
       err "usage: vibrae autostart on|off"
@@ -660,11 +679,24 @@ PY
 ## 06 PI HELPERS
 ########################################
 is_pi(){ [ -f /etc/raspberrypi-release ] || grep -qi 'raspberry' /proc/cpuinfo 2>/dev/null || grep -qi 'raspi' /proc/cpuinfo 2>/dev/null; }
-cmd_pi_install(){ license_notice; if ! is_pi; then warn "Not a Raspberry Pi (continuing anyway)"; fi; sudo bash "$ROOT_DIR/scripts/pi/setup.sh" | colorize_stream; }
+cmd_pi_install(){
+  license_notice
+  if ! is_pi; then warn "Not a Raspberry Pi (continuing anyway)"; fi
+  # Support optional flag: --sudoers|-S to enable passwordless sudo for Vibrae ops
+  local sudoers_flag=""
+  case "${1-}" in
+    --sudoers|-S) sudoers_flag=1; shift || true;;
+  esac
+  if [ -n "$sudoers_flag" ]; then
+    VIBRAE_SUDOERS=1 sudo -E bash "$ROOT_DIR/scripts/pi/setup.sh" | colorize_stream
+  else
+    sudo -E bash "$ROOT_DIR/scripts/pi/setup.sh" | colorize_stream
+  fi
+}
 cmd_pi_start(){ license_notice; [ -f "$ROOT_DIR/.installed" ] || warn "setup has not been run locally; proceeding with Pi systemd start"; sudo bash "$ROOT_DIR/scripts/pi/run.sh" | colorize_stream; }
 cmd_pi_stop(){ license_notice; sudo bash "$ROOT_DIR/scripts/pi/stop.sh" | colorize_stream; }
-cmd_pi_status(){ banner; systemctl --no-pager status vibrae-backend vibrae-frontend vibrae-cloudflared || true; }
-cmd_pi_logs(){ local unit="${1:-vibrae-backend}"; journalctl -u "$unit" -f; }
+cmd_pi_status(){ banner; sudo systemctl --no-pager status vibrae-backend vibrae-frontend vibrae-cloudflared nginx || true; }
+cmd_pi_logs(){ local unit="${1:-vibrae-backend}"; sudo journalctl -u "$unit" -f; }
 
 # Enable extended glob for trimming
 shopt -s extglob 2>/dev/null || true
@@ -725,7 +757,10 @@ _register doc        cmd_doctor         "Alias for doctor"
 _register shell      run_interactive    "Interactive shell"
 _register sh         run_interactive    "Alias for shell"
 _register ahelp      cmd_alias_help     "Show alias help"
-_register pi         cmd_pi_root        "Raspberry Pi helpers"
+_register systemd    cmd_pi_root        "Systemd (Linux) helpers"
+_register sys        cmd_pi_root        "Alias for systemd helpers"
+_register pi         cmd_pi_root        "Alias for systemd helpers"
+_register mac        cmd_mac_root       "macOS helpers"
 _register help       cmd_help           "Show help"
 _register --help     cmd_help           "Show help"
 _register -h         cmd_help           "Show help"
@@ -790,16 +825,105 @@ EOC
     - Use edit-sec for safe secret changes
 EOC
 }
-cmd_pi_root(){ case "${1-}" in -h|--help|help) _help_pi; return 0;; install) shift; cmd_pi_install;; start) shift; cmd_pi_start;; stop) shift; cmd_pi_stop;; status) shift; cmd_pi_status;; logs) shift; cmd_pi_logs "$@";; *) err "pi: unknown subcommand '${1-}'"; return 1;; esac }
-_help_pi(){ help_banner; section "Pi"; cat <<'HPI'
-  Usage: vibrae pi <install|start|stop|status|logs>
+cmd_pi_sudoers(){
+  banner; section "Pi sudoers"
+  local user="$USER"
+  local sudoers_file="/etc/sudoers.d/vibrae-$user"
+  local SYSTEMCTL_PATH JOURNALCTL_PATH
+  SYSTEMCTL_PATH="$(command -v systemctl || echo /bin/systemctl)"
+  JOURNALCTL_PATH="$(command -v journalctl || echo /bin/journalctl)"
+  local tmp; tmp="$(mktemp 2>/dev/null || echo "/tmp/vibrae_pi_sudoers_${user}.$$")"
+  cat > "$tmp" <<SUDO
+Cmnd_Alias VIBRAE_CMDS = \
+  $SYSTEMCTL_PATH start vibrae-*, \
+  $SYSTEMCTL_PATH stop vibrae-*, \
+  $SYSTEMCTL_PATH restart vibrae-*, \
+  $SYSTEMCTL_PATH status vibrae-*, \
+  $SYSTEMCTL_PATH start nginx, \
+  $SYSTEMCTL_PATH stop nginx, \
+  $SYSTEMCTL_PATH restart nginx, \
+  $SYSTEMCTL_PATH status nginx, \
+  $JOURNALCTL_PATH -u vibrae-*, \
+  $JOURNALCTL_PATH -u nginx, \
+  /bin/bash $ROOT_DIR/scripts/pi/setup.sh, \
+  /bin/bash $ROOT_DIR/scripts/pi/run.sh, \
+  /bin/bash $ROOT_DIR/scripts/pi/stop.sh
+$user ALL=(root) NOPASSWD: VIBRAE_CMDS
+SUDO
+  echo "Installing sudoers file: $sudoers_file"
+  if ! sudo install -m 440 "$tmp" "$sudoers_file"; then
+    err "failed to install sudoers file"
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+  ok "sudoers installed for user $user"
+}
+cmd_pi_root(){ case "${1-}" in -h|--help|help|'') _help_pi; return 0;; install) shift; cmd_pi_install "$@";; start) shift; cmd_pi_start "$@";; stop) shift; cmd_pi_stop "$@";; status) shift; cmd_pi_status "$@";; logs) shift; cmd_pi_logs "$@";; sudoers) shift; cmd_pi_sudoers "$@";; *) err "systemd: unknown subcommand '${1-}'"; return 1;; esac }
+_help_pi(){ help_banner; section "Systemd (Linux)"; cat <<'HPI'
+  Usage: vibrae systemd <install|start|stop|status|logs|sudoers> [options]
+         (aliases: sys, pi)
 
-  install              Configure systemd + nginx on Pi
-  start                Start services via systemd
-  stop                 Stop services
-  status               Systemd status summary
-  logs [unit]          Follow journal for unit (default vibrae-backend)
+  install [--sudoers|-S]  Configure systemd + nginx on Linux
+                          --sudoers adds a limited passwordless sudoers rule
+  start                   Start services via systemd (sudo)
+  stop                    Stop services (sudo)
+  status                  Systemd status summary (sudo)
+  logs [unit]             Follow journal for unit (sudo; default vibrae-backend)
+  sudoers                 Add NOPASSWD rule without reinstalling
+
+Notes:
+  - 'systemd install' preserves env via sudo -E, so AGE/GPG/GIT_SSH_* can be passed.
+  - Enable passwordless sudo later by re-running: vibrae systemd install --sudoers
+  - Or run independently anytime: vibrae systemd sudoers
 HPI
+}
+
+########################################
+## 07b MAC HELPERS
+########################################
+cmd_mac_sudoers(){
+  banner; section "macOS sudoers"
+  if [[ "$(uname)" != "Darwin" ]]; then warn "This helper is intended for macOS"; fi
+  local user="$USER"
+  local nginx_bin pkill_bin ctl_script sudoers_file
+  nginx_bin="$(command -v nginx || echo /usr/local/bin/nginx)"
+  pkill_bin="$(command -v pkill || echo /usr/bin/pkill)"
+  ctl_script="$ROOT_DIR/scripts/nginxctl.sh"
+  sudoers_file="/etc/sudoers.d/vibrae-${user}"
+  if [ ! -x "$nginx_bin" ]; then warn "nginx not found; install via Homebrew (brew install nginx)"; fi
+  section "Writing sudoers entry (requires admin)"
+  local tmp; tmp="$(mktemp 2>/dev/null || echo "/tmp/vibrae_sudoers_${user}.$$")"
+  cat >"$tmp" <<SUDO
+Cmnd_Alias VIBRAE_MAC = \
+  $nginx_bin, \
+  $pkill_bin, \
+  /bin/bash $ctl_script
+$user ALL=(root) NOPASSWD: VIBRAE_MAC
+SUDO
+  echo "Creating $sudoers_file"
+  if ! sudo install -m 440 "$tmp" "$sudoers_file"; then
+    err "failed to write sudoers"
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
+  rm -f "$tmp" 2>/dev/null || true
+  ok "sudoers installed: $sudoers_file"
+  echo "Notes:"
+  echo "  - Grants NOPASSWD for nginx, pkill, and nginxctl.sh (limited to this repo path)."
+  echo "  - If your repo path changes, re-run: vibrae mac sudoers"
+}
+cmd_mac_root(){ case "${1-}" in -h|--help|help) _help_mac; return 0;; sudoers) shift; cmd_mac_sudoers "$@";; *) err "mac: unknown subcommand '${1-}'"; return 1;; esac }
+_help_mac(){ help_banner; section "macOS"; cat <<'HMAC'
+  Usage: vibrae mac <sudoers>
+
+  sudoers    Install a limited NOPASSWD sudoers rule to control nginx
+             and the helper script without re-entering your password.
+
+Notes:
+  - Applies to nginx start/stop (via nginx or nginxctl.sh) and pkill for cleanup.
+  - On macOS, binding to :80 requires elevated privileges; this avoids prompts.
+HMAC
 }
 cmd_alias_help(){ echo "Aliases:"; echo "  up->start down->stop st->status ce->check-env doc->doctor sh->shell"; }
 _help_start(){ help_banner; section "Start"; cat <<'HSTART'

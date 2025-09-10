@@ -196,6 +196,100 @@ Alternatively, you can run `./stop.sh`.
 - **Backend**: FastAPI / Uvicorn + SQLite (file DB) using SQLAlchemy.
 - **Logging**: Separate `backend.log` and `player.log` via `config/logging.ini` (player & scheduler isolated).
 
+### Linux (systemd) — including Raspberry Pi
+
+Fully supported without Docker. Uses systemd services, nginx, and an auto‑update timer. Recommended path is via the CLI which preserves env variables through sudo.
+
+Quick install (on Linux, including Raspberry Pi):
+
+```bash
+# inside repo root on the Linux host (incl. Raspberry Pi)
+./vibrae systemd install                 # wraps: sudo -E bash scripts/pi/setup.sh
+# aliases: ./vibrae sys install, ./vibrae pi install
+```
+
+Optional one‑time secrets (set as env for install; they are persisted securely):
+
+- GPG_PRIVATE_KEY (+ GPG_OWNERTRUST): DEFAULT path (per `.sops.yaml`), imported for SOPS decrypt; optional `/etc/vibrae/gpg_pass` for passphrase
+- AGE_PRIVATE_KEY: OPTIONAL alternative; stored at `/etc/vibrae/age.key` but only works if your `.sops.yaml` includes `age` recipients and the env files were re‑encrypted with age
+- GIT_SSH_PRIVATE_KEY: deploy key saved to `/etc/vibrae/deploy_key` for non‑interactive `git pull`
+
+Examples:
+
+```bash
+# Using GPG (default; passphrase-less or with passfile)
+GPG_PRIVATE_KEY="$(cat private.asc)" GPG_OWNERTRUST="$(cat ownertrust.txt)" ./vibrae systemd install
+# Optional: create a passfile if your GPG key is passphrase-protected
+echo 'your-passphrase' | sudo tee /etc/vibrae/gpg_pass >/dev/null && sudo chmod 600 /etc/vibrae/gpg_pass
+
+# Persist a git deploy key for auto-update
+GIT_SSH_PRIVATE_KEY="$(cat id_ed25519)" ./vibrae systemd install
+
+# Using AGE (only if .sops.yaml has age recipients and files were re-encrypted)
+AGE_PRIVATE_KEY='AGE-SECRET-KEY-...' ./vibrae systemd install
+```
+
+Services created (systemd):
+
+- vibrae-backend.service (Uvicorn / FastAPI)
+- vibrae-frontend.service (static server via `npx serve` if export exists)
+- vibrae-cloudflared.service (optional; requires `CLOUDFLARE_TUNNEL_TOKEN`)
+- vibrae-update.service + vibrae-update.timer (auto‑pull + reinstall every ~10min)
+
+Common management:
+
+```bash
+./vibrae systemd status
+./vibrae systemd start
+./vibrae systemd stop
+./vibrae systemd logs
+# aliases: use `sys` or legacy `pi` in place of `systemd`
+```
+
+Passwordless sudo (optional):
+
+To avoid re‑typing your password for service control, enable a limited sudoers rule during setup:
+
+```bash
+VIBRAE_SUDOERS=1 ./vibrae systemd install
+```
+
+This grants your user NOPASSWD for a small set of Vibrae commands: systemctl start/stop/restart/status vibrae-* and nginx; journalctl for vibrae-* and nginx; and the Pi helper scripts. Safe for operational convenience.
+
+Alternatively, you can add these sudoers rules any time after installation without reinstalling:
+
+```bash
+./vibrae systemd sudoers   # aliases: sys sudoers, pi sudoers
+```
+
+Notes:
+
+- The canonical setup script lives at `scripts/pi/setup.sh`. The legacy `raspi/setup.sh` remains as a thin wrapper (deprecated).
+- The installer will decrypt `config/env/.env.backend.enc` if present and keys are available. By default, `.sops.yaml` uses PGP; AGE works only if you add `age` recipients and re‑encrypt. Plaintext is written to `config/env/.env.backend` on the Pi.
+- Auto‑update is idempotent and non‑interactive. It will attempt `git pull` (or hard reset) and reinstall Python deps if needed, then restart services.
+
+Adding AGE recipients (optional):
+
+1) Generate an age key on your workstation (keeps private key local):
+```bash
+age-keygen -o ~/.config/age/key.txt
+```
+2) Copy the public recipient (starts with `age1...`) from that file and add to `.sops.yaml` under `key_groups.age`:
+```yaml
+creation_rules:
+	- path_regex: '^config/env/\\.env\\.(backend|frontend)(\\.enc)?$'
+		key_groups:
+			- pgp:
+					- FF46BCFF59A65BC21DA916A289FC9A82DD3ECF94  # dani's macbook
+				age:
+					- age1yourpublicrecipient...
+```
+3) Re-encrypt your envs so they include an age stanza:
+```bash
+./vibrae env encrypt
+./vibrae env f-encrypt
+```
+
 ---
 
 ## Environment Variables
@@ -360,7 +454,8 @@ Environment: `env show|edit|set|get|sync|encrypt|decrypt|edit-sec` + frontend `f
 Database: `db init` (maps internally to `db-init`)
 Music Source: `source detect`, `autostart on|off`
 Diagnostics: `check-env`, `doctor`
-Raspberry Pi: `pi install|start|stop|status|logs`
+Systemd (Linux): `systemd install|start|stop|status|logs|sudoers` (aliases: `sys`, `pi`)
+macOS: `mac sudoers`
 Misc: `shell`, `clear`, `version`, `help`
 
 Inside interactive shell: `help`, `status`, `logs`, etc. AUTOSTART (if true) triggers service start upon entering shell.
@@ -388,10 +483,12 @@ Inside interactive shell: `help`, `status`, `logs`, etc. AUTOSTART (if true) tri
 | Show single frontend key | `vibrae env f-get KEY` |
 | Detect music source | `vibrae source detect` |
 | Toggle autostart | `vibrae autostart on|off` |
+| Add Linux passwordless sudo (systemd) | `vibrae systemd sudoers` (or `VIBRAE_SUDOERS=1 vibrae systemd install`) |
+| Add macOS passwordless sudo | `vibrae mac sudoers` |
 | Initialize database | `vibrae db init` |
 | Environment validation | `vibrae check-env` (alias: `ce`) |
 | Dependency doctor | `vibrae doctor` (alias: `doc`) |
-| Raspberry Pi service logs | `vibrae pi logs` |
+| Systemd service logs | `vibrae systemd logs` (aliases: `sys logs`, `pi logs`) |
 | Interactive shell | `vibrae shell` (alias: `sh`) |
 
 Aliases: `ver`→version, `st`→status, `ce`→check-env, `doc`→doctor, `up`→start, `down`→stop, `ls-env`→env show.

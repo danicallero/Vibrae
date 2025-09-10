@@ -223,6 +223,110 @@ Shortcut:
 EOM
 }
 
+# Interactive onboarding wizard (runs when CLI is opened with no args and setup not completed)
+is_interactive(){ [ -t 0 ] && [ -t 1 ]; }
+prompt_yn(){
+  # prompt_yn "Question?" [default]
+  local q="$1"; local def="${2:-y}"; local hint
+  case "$(echo "$def" | tr '[:upper:]' '[:lower:]')" in y|yes) hint="Y/n";; *) hint="y/N";; esac
+  while true; do
+    read -r -p "$q [$hint]: " ans || { echo; return 1; }
+    ans="${ans:-$def}"; ans="$(echo "$ans" | tr '[:upper:]' '[:lower:]')"
+    case "$ans" in y|yes) return 0;; n|no) return 1;; esac
+    echo "Please answer y or n."
+  done
+}
+
+installed_ok(){ [ -f "$ROOT_DIR/.installed" ] && [ -d "$ROOT_DIR/venv" ]; }
+
+run_onboarding(){
+  banner
+  section "Welcome"
+  echo "Let's get Vibrae ready. We'll help you:" \
+       "install dependencies, set up env, init the database, and start services." | fold -s
+  echo
+  if ! is_interactive; then onboarding_message; return 0; fi
+
+  # 1) Decrypt envs if encrypted files are present
+  local backend_enc frontend_enc
+  backend_enc="${ENV_FILE}.enc"
+  frontend_enc="${FRONT_ENV_FILE}.enc"
+  if [ -f "$backend_enc" ] && [ ! -f "$ENV_FILE" ]; then
+    section "Encrypted backend env detected"
+    echo "Found $(basename "$backend_enc")."
+    if command -v sops >/dev/null 2>&1; then
+      if prompt_yn "Decrypt backend env now?" y; then
+        cmd_env_decrypt || warn "decrypt failed; you can retry later with: vibrae env decrypt"
+      fi
+    else
+      warn "sops is not installed; cannot decrypt automatically (install sops and run: vibrae env decrypt)"
+    fi
+  fi
+  if [ -f "$frontend_enc" ] && [ ! -f "$FRONT_ENV_FILE" ]; then
+    section "Encrypted frontend env detected"
+    echo "Found $(basename "$frontend_enc")."
+    if command -v sops >/dev/null 2>&1; then
+      if prompt_yn "Decrypt frontend env now?" y; then
+        cmd_env_f_decrypt || warn "frontend decrypt failed; retry later with: vibrae env f-decrypt"
+      fi
+    else
+      warn "sops is not installed; cannot decrypt automatically (install sops and run: vibrae env f-decrypt)"
+    fi
+  fi
+
+  # 2) Ensure backend/frontend env and optionally edit/sync
+  section "Environment"
+  ensure_env
+  if prompt_yn "Open backend env editor now?" y; then
+    cmd_env_edit || true
+  fi
+  if prompt_yn "Sync recommended backend keys (non-destructive)?" y; then
+    cmd_env_sync || true
+  fi
+  ensure_front_env
+  if prompt_yn "Open frontend env editor now?" n; then
+    cmd_env_f_edit || true
+  fi
+  if prompt_yn "Sync recommended frontend keys (non-destructive)?" y; then
+    cmd_env_f_sync || true
+  fi
+
+  # 3) Install dependencies
+  section "Install"
+  if installed_ok; then
+    ok "Already installed (venv + stamp present)"
+  else
+    if prompt_yn "Install dependencies now?" y; then
+      cmd_install || { err "install failed; fix errors and rerun 'vibrae'"; return 1; }
+    fi
+  fi
+
+  # 4) Initialize database
+  if installed_ok; then
+    section "Database"
+    if prompt_yn "Initialize DB (create tables & seed admin)?" y; then
+      cmd_db_init || warn "db init failed; you can retry later with: vibrae db init"
+    fi
+  fi
+
+  # 5) Start services
+  if installed_ok; then
+    section "Start"
+    if prompt_yn "Start Vibrae now?" y; then
+      cmd_start || warn "start failed; check 'vibrae logs' and run 'vibrae doctor'"
+    fi
+  fi
+
+  # 6) Open URL
+  if prompt_yn "Open the web UI in your browser?" y; then
+    cmd_open || true
+  fi
+
+  echo
+  ok "Onboarding complete"
+  echo "Tip: next time, simply run: vibrae"
+}
+
 ########################################
 ## 03 GENERIC UTILITIES
 ########################################
@@ -992,7 +1096,12 @@ _show_cmd_help(){ HELP_BANNER_SHOWN=""; local c="$1"; local helper="_help_${c//-
 dispatch(){
   local cmd="${1-}"
   if [ -z "$cmd" ]; then
-    if [ ! -f "$ROOT_DIR/.installed" ] || [ ! -d "$ROOT_DIR/venv" ]; then onboarding_message; return 0; else run_interactive; return 0; fi
+    if [ ! -f "$ROOT_DIR/.installed" ] || [ ! -d "$ROOT_DIR/venv" ]; then
+      if is_interactive; then run_onboarding; else onboarding_message; fi
+      return 0
+    else
+      run_interactive; return 0
+    fi
   fi
   # Map 'restart -front' or 'restart front' to frontend-only restart
   if [ "$cmd" = "restart" ] && { [ "${2-}" = "-front" ] || [ "${2-}" = "front" ]; }; then

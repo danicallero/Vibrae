@@ -74,11 +74,23 @@ if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
 else
   BOLD=""; RESET=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; GREY=""; CYAN=""
 fi
-ok(){ printf "%b%s%b %s\n" "$GREEN" "✔" "$RESET" "$*"; }
-warn(){ printf "%b%s%b %s\n" "$YELLOW" "!" "$RESET" "$*"; }
-err(){ printf "%b%s%b %s\n" "$RED" "✖" "$RESET" "$*" 1>&2; }
+
+# Respect NO_COLOR (https://no-color.org/) and VIBRAE_NO_COLOR=1 to disable any styling
+if [ -n "${NO_COLOR-}" ] || [ "${VIBRAE_NO_COLOR-0}" = "1" ]; then
+  BOLD=""; RESET=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; GREY=""; CYAN=""
+fi
+
+# Centralized styles/icons
+STYLE_HEADER="${BOLD}${CYAN}"
+STYLE_BANNER="${BOLD}${BLUE}"
+ICON_OK="✔"; ICON_WARN="!"; ICON_ERR="✖"
+
+# Styled output helpers
+ok(){ printf "%b%s%b %s\n" "$GREEN" "$ICON_OK" "$RESET" "$*"; }
+warn(){ printf "%b%s%b %s\n" "$YELLOW" "$ICON_WARN" "$RESET" "$*"; }
+err(){ printf "%b%s%b %s\n" "$RED" "$ICON_ERR" "$RESET" "$*" 1>&2; }
 # Styled header and separator for improved readability
-hdr(){ printf "%b%s%s%s%b\n" "$BOLD$CYAN" "" "$*" "" "$RESET"; }
+hdr(){ printf "%b%s%s%s%b\n" "$STYLE_HEADER" "" "$*" "" "$RESET"; }
 # Draw a line with subtle grey when available
 line(){
   local ch
@@ -92,33 +104,40 @@ line(){
   [ -n "$GREY" ] && printf "%b" "$RESET" || true
 }
 section(){ echo; hdr "$1"; line; }
-#banner(){ printf "=== %bVibrae%b — Sound, simplified===\n" "$BOLD" "$RESET"; }
 
 BANNER_WIDTH=50
-
+#banner(){ printf "=== %bVibrae%b — Sound, simplified===\n" "$BOLD" "$RESET"; }
 banner(){
-  # UTF-8 detection (simple): locale contains UTF-8 and terminal supports it
+  # UTF-8 detection: be safe even under `set -u` and allow opt-out via VIBRAE_FORCE_ASCII=1
   local title=" Vibrae — Sound, simplified "
   local utf8=0
-  if (locale 2>/dev/null | grep -qi 'UTF-8') || (echo "$LC_ALL$LC_CTYPE$LANG" | grep -qi 'UTF-8'); then utf8=1; fi
-  local tl tr bl br hl vl
-  if [ $utf8 -eq 1 ]; then
-    hl='═'; vl='║'; tl='╔'; tr='╗'; bl='╚'; br='╝';
+  # If user forces ASCII, keep ascii; else detect via locale envs or `locale`
+  if [ "${VIBRAE_FORCE_ASCII-0}" = "1" ]; then
+    utf8=0
   else
-    hl='='; vl='|'; tl='+'; tr='+'; bl='+'; br='+';
+    if (locale 2>/dev/null | grep -qi 'UTF-8') || \
+       (printf '%s' "${LC_ALL-}${LC_CTYPE-}${LANG-}" | grep -qi 'UTF-8'); then
+      utf8=1
+    fi
+  fi
+  local tl tr bl br hl vl
+  if [ "$utf8" -eq 1 ]; then
+    hl='═'; vl='║'; tl='╔'; tr='╗'; bl='╚'; br='╝'
+  else
+    hl='='; vl='|'; tl='+'; tr='+'; bl='+'; br='+'
   fi
   local border; border="$(printf '%s' "$(printf '%*s' "$BANNER_WIDTH" '')" | tr ' ' "$hl")"
-  printf "%b%s%s%s%b\n" "$BOLD$BLUE" "$tl" "$border" "$tr" "$RESET"
+  printf "%b%s%s%s%b\n" "$STYLE_BANNER" "$tl" "$border" "$tr" "$RESET"
   local pad=$(( (BANNER_WIDTH - ${#title}) / 2 ))
   local pad2=$(( BANNER_WIDTH - pad - ${#title} ))
-  printf "%b%s%*s%s%*s%s%b\n" "$BOLD$BLUE" "$vl" "$pad" "" "$title" "$pad2" "" "$vl" "$RESET"
-  printf "%b%s%s%s%b\n" "$BOLD$BLUE" "$bl" "$border" "$br" "$RESET"
+  printf "%b%s%*s%s%*s%s%b\n" "$STYLE_BANNER" "$vl" "$pad" "" "$title" "$pad2" "" "$vl" "$RESET"
+  printf "%b%s%s%s%b\n" "$STYLE_BANNER" "$bl" "$border" "$br" "$RESET"
 }
 HELP_BANNER_SHOWN=""
 help_banner(){ if [ -z "$HELP_BANNER_SHOWN" ]; then banner; HELP_BANNER_SHOWN=1; fi }
 
 license_notice(){ printf "%bVibrae%b (GPLv3, no warranty)\n" "$BOLD" "$RESET"; }
-contact_information(){ printf "%bContact%b\n" "$BOLD" "$RESET"; printf "Issues: GitHub repo (vibrae). Email: vibrae@danicallero.es\n"; }
+contact_information(){ printf "%bContact%b\n" "$BOLD" "$RESET"; printf "Issues: GitHub repo (./vibrae github). Email: vibrae@danicallero.es\n"; }
 
 usage(){
   banner; section "Core"; cat <<EOF
@@ -326,7 +345,7 @@ cmd_status(){
       # Backend
       if [ "$backend" = "ok" ]; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Backend" "running"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Backend" "stopped"; fi
       # Player
-      if [ "$player" = "running" ]; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Player" "running"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Player" "idle"; fi
+      if [ "$player" = "running" ]; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Player" "running"; else printf "  %b◐%b %-12s %s\n" "$YELLOW" "$RESET" "Player" "idle"; fi
       # Frontend
       local fe_label
       if [ -n "${fe:-}" ] && [ "${fe}" != "unknown" ]; then

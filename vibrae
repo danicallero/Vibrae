@@ -212,11 +212,20 @@ EOF
 
 onboarding_message(){
   echo; warn "Vibrae is not installed yet (missing .installed or venv)"; cat <<'EOM'
-Next steps:
-  1. Run: vibrae install        # installs deps
-  2. Edit env: vibrae env edit  # or: vibrae env sync
-  3. Init DB: vibrae db init
-  4. Start: vibrae start
+Next steps (non-interactive):
+  1) vibrae install           # install dependencies
+  2) vibrae env edit          # or: vibrae env sync
+  3) vibrae db init           # create DB tables & seed admin
+  4) vibrae start             # run backend, static serve, tunnel
+
+Tip (interactive):
+  - Run: vibrae shell
+    Then type, one by one: install, doctor, db init, env decrypt (if prompted), env f-decrypt (if prompted), start
+
+Encrypted env note:
+  - If you see: "found encrypted backend env ... decrypt with: vibrae env decrypt"
+    Run: vibrae env decrypt   # backend env
+         vibrae env f-decrypt # frontend env (optional)
 
 Shortcut:
   vibrae install && vibrae db init && vibrae start
@@ -651,7 +660,7 @@ def ok(msg):
   print(f"{color('32','[ok]')} {msg}")
 def warn(msg):
   print(f"{color('33','[warn]')} {msg}")
-mods=["fastapi","uvicorn","sqlalchemy","pydantic","jose","python_dotenv","websockets","vlc"]
+mods=["fastapi","uvicorn","sqlalchemy","pydantic","jose","dotenv","websockets","vlc"]
 missing=[]
 for m in mods:
   try:
@@ -672,7 +681,23 @@ try:
 except Exception:
   pass
 PY
-  else warn "venv not found; run scripts/app/setup.sh"; fi }
+  else warn "venv not found; run scripts/app/setup.sh"; fi
+  hdr "Sudoers"
+  if command -v sudo >/dev/null 2>&1; then
+    local sf="/etc/sudoers.d/vibrae-$USER"
+    if [ -f "$sf" ]; then
+      ok "sudoers present ($sf)"
+    else
+      if [[ "$(uname)" == "Darwin" ]]; then
+        warn "sudoers missing; run: vibrae mac sudoers"
+      else
+        warn "sudoers missing; run: vibrae systemd sudoers"
+      fi
+    fi
+  else
+    warn "sudo not found; skipping sudoers check"
+  fi
+}
 
 
 ########################################
@@ -705,6 +730,32 @@ shopt -s extglob 2>/dev/null || true
 ## 07 INTERACTIVE SHELL
 ########################################
 run_interactive(){ banner; autostart_maybe_start || true; printf "Type 'help' for commands, 'quit' to exit.\n"; while true; do if read -e -r -p "vibrae> " line; then line="${line##+([[:space:]])}"; line="${line%%+([[:space:]])}"; case "$line" in "" ) continue ;; quit|exit ) break ;; help ) usage; echo; continue ;; clear ) clear 2>/dev/null || printf '\033c'; echo; continue ;; esac; IFS=' ' read -r -a args <<< "$line"; set +e; dispatch "${args[@]}"; rc=$?; set -e; echo; else break; fi; done }
+run_interactive(){
+  banner
+  if [ ! -f "$ROOT_DIR/.installed" ] || [ ! -d "$ROOT_DIR/venv" ]; then
+    ensure_env || true
+    warn "Vibrae is not installed yet"
+    onboarding_message
+  else
+    autostart_maybe_start || true
+  fi
+  printf "Type 'help' for commands, 'quit' to exit.\n"
+  while true; do
+    if read -e -r -p "vibrae> " line; then
+      line="${line##+([[:space:]])}"; line="${line%%+([[:space:]])}"
+      case "$line" in
+        "" ) continue ;;
+        quit|exit ) break ;;
+        help ) usage; echo; continue ;;
+        clear ) clear 2>/dev/null || printf '\033c'; echo; continue ;;
+      esac
+      IFS=' ' read -r -a args <<< "$line"
+      set +e; dispatch "${args[@]}"; rc=$?; set -e; echo
+    else
+      break
+    fi
+  done
+}
 
 ########################################
 ## 08 DISPATCH

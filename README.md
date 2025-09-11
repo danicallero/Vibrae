@@ -81,6 +81,14 @@ run.sh / stop.sh / setup.sh # Top-level wrappers (delegate to scripts/app/)
 
 ## Quick Start
 
+Shortest path (guided):
+
+```bash
+./vibrae            # launches interactive install wizard if not installed
+# or
+vibrae wizard       # explicitly run the wizard
+```
+
 ### 1. Clone the repository
 
 ```bash

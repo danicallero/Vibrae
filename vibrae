@@ -203,6 +203,7 @@ EOF
 EOF
   section "Misc"; cat <<EOF
   ${BOLD}shell${RESET}               Interactive shell
+  ${BOLD}wizard${RESET}              Guided install/setup
   ${BOLD}clear${RESET}               Clear the screen
   ${BOLD}ahelp${RESET}               Show command aliases
   ${BOLD}help${RESET}                Show this help
@@ -212,119 +213,26 @@ EOF
 
 onboarding_message(){
   echo; warn "Vibrae is not installed yet (missing .installed or venv)"; cat <<'EOM'
-Next steps:
-  1. Run: vibrae install        # installs deps
-  2. Edit env: vibrae env edit  # or: vibrae env sync
-  3. Init DB: vibrae db init
-  4. Start: vibrae start
+Next steps (non-interactive):
+  1) vibrae install           # install dependencies
+  2) vibrae env edit          # or: vibrae env sync
+  3) vibrae db init           # create DB tables & seed admin
+  4) vibrae start             # run backend, static serve, tunnel
+
+Tip (interactive):
+  - Run: vibrae wizard
+    Guided install: install deps, set up env, init DB, and start services
+  - Or: vibrae shell
+    Then type, one by one: install, doctor, db init, env decrypt (if prompted), env f-decrypt (if prompted), start
+
+Encrypted env note:
+  - If you see: "found encrypted backend env ... decrypt with: vibrae env decrypt"
+    Run: vibrae env decrypt   # backend env
+         vibrae env f-decrypt # frontend env (optional)
 
 Shortcut:
   vibrae install && vibrae db init && vibrae start
 EOM
-}
-
-# Interactive onboarding wizard (runs when CLI is opened with no args and setup not completed)
-is_interactive(){ [ -t 0 ] && [ -t 1 ]; }
-prompt_yn(){
-  # prompt_yn "Question?" [default]
-  local q="$1"; local def="${2:-y}"; local hint
-  case "$(echo "$def" | tr '[:upper:]' '[:lower:]')" in y|yes) hint="Y/n";; *) hint="y/N";; esac
-  while true; do
-    read -r -p "$q [$hint]: " ans || { echo; return 1; }
-    ans="${ans:-$def}"; ans="$(echo "$ans" | tr '[:upper:]' '[:lower:]')"
-    case "$ans" in y|yes) return 0;; n|no) return 1;; esac
-    echo "Please answer y or n."
-  done
-}
-
-installed_ok(){ [ -f "$ROOT_DIR/.installed" ] && [ -d "$ROOT_DIR/venv" ]; }
-
-run_onboarding(){
-  banner
-  section "Welcome"
-  echo "Let's get Vibrae ready. We'll help you:" \
-       "install dependencies, set up env, init the database, and start services." | fold -s
-  echo
-  if ! is_interactive; then onboarding_message; return 0; fi
-
-  # 1) Decrypt envs if encrypted files are present
-  local backend_enc frontend_enc
-  backend_enc="${ENV_FILE}.enc"
-  frontend_enc="${FRONT_ENV_FILE}.enc"
-  if [ -f "$backend_enc" ] && [ ! -f "$ENV_FILE" ]; then
-    section "Encrypted backend env detected"
-    echo "Found $(basename "$backend_enc")."
-    if command -v sops >/dev/null 2>&1; then
-      if prompt_yn "Decrypt backend env now?" y; then
-        cmd_env_decrypt || warn "decrypt failed; you can retry later with: vibrae env decrypt"
-      fi
-    else
-      warn "sops is not installed; cannot decrypt automatically (install sops and run: vibrae env decrypt)"
-    fi
-  fi
-  if [ -f "$frontend_enc" ] && [ ! -f "$FRONT_ENV_FILE" ]; then
-    section "Encrypted frontend env detected"
-    echo "Found $(basename "$frontend_enc")."
-    if command -v sops >/dev/null 2>&1; then
-      if prompt_yn "Decrypt frontend env now?" y; then
-        cmd_env_f_decrypt || warn "frontend decrypt failed; retry later with: vibrae env f-decrypt"
-      fi
-    else
-      warn "sops is not installed; cannot decrypt automatically (install sops and run: vibrae env f-decrypt)"
-    fi
-  fi
-
-  # 2) Ensure backend/frontend env and optionally edit/sync
-  section "Environment"
-  ensure_env
-  if prompt_yn "Open backend env editor now?" y; then
-    cmd_env_edit || true
-  fi
-  if prompt_yn "Sync recommended backend keys (non-destructive)?" y; then
-    cmd_env_sync || true
-  fi
-  ensure_front_env
-  if prompt_yn "Open frontend env editor now?" n; then
-    cmd_env_f_edit || true
-  fi
-  if prompt_yn "Sync recommended frontend keys (non-destructive)?" y; then
-    cmd_env_f_sync || true
-  fi
-
-  # 3) Install dependencies
-  section "Install"
-  if installed_ok; then
-    ok "Already installed (venv + stamp present)"
-  else
-    if prompt_yn "Install dependencies now?" y; then
-      cmd_install || { err "install failed; fix errors and rerun 'vibrae'"; return 1; }
-    fi
-  fi
-
-  # 4) Initialize database
-  if installed_ok; then
-    section "Database"
-    if prompt_yn "Initialize DB (create tables & seed admin)?" y; then
-      cmd_db_init || warn "db init failed; you can retry later with: vibrae db init"
-    fi
-  fi
-
-  # 5) Start services
-  if installed_ok; then
-    section "Start"
-    if prompt_yn "Start Vibrae now?" y; then
-      cmd_start || warn "start failed; check 'vibrae logs' and run 'vibrae doctor'"
-    fi
-  fi
-
-  # 6) Open URL
-  if prompt_yn "Open the web UI in your browser?" y; then
-    cmd_open || true
-  fi
-
-  echo
-  ok "Onboarding complete"
-  echo "Tip: next time, simply run: vibrae"
 }
 
 ########################################
@@ -404,6 +312,108 @@ truthy(){ case "$(echo "$1" | tr '[:upper:]' '[:lower:]')" in true|1|yes|on) ret
 is_uvicorn_running(){ pgrep -f "uvicorn" >/dev/null 2>&1 || return 1; }
 
 autostart_maybe_start(){ ensure_env; local as; as="$(kv_get AUTOSTART)"; if truthy "$as"; then if is_uvicorn_running; then ok "AUTOSTART on; already running"; else if [ ! -f "$ROOT_DIR/.installed" ] || [ ! -d "$ROOT_DIR/venv" ]; then warn "AUTOSTART on but setup not completed; run scripts/app/setup.sh first"; else warn "AUTOSTART on; starting services"; cmd_start; fi; fi; return 0; fi; return 1; }
+
+# Simple interactive yes/no prompt (default yes).
+# Returns: 0=yes, 1=no/skip, 130=abort (exit/quit/q)
+ask_yes_no(){
+  local prompt="$1"; shift || true
+  local def="${1:-Y}"
+  local ans
+  if [ ! -t 0 ]; then return 1; fi
+  while true; do
+    if [ "$def" = "Y" ]; then
+      read -r -p "$prompt [Y/n]: " ans || return 1
+      ans="${ans:-Y}"
+    else
+      read -r -p "$prompt [y/N]: " ans || return 1
+      ans="${ans:-N}"
+    fi
+    case "$(echo "$ans" | tr '[:upper:]' '[:lower:]')" in
+  y|yes) return 0 ;;
+  n|no)  return 1 ;;
+  q|quit|exit) return 130 ;;
+    esac
+  done
+}
+
+# Interactive install wizard
+run_wizard(){
+  banner
+  section "Welcome"
+  echo "This wizard will help you install Vibrae, set up the environment, initialize the database, and start services."
+  echo "Tip: type 'exit' at any prompt to quit."
+  echo
+  # Guard: if already installed, offer to run doctor/start
+  if [ -f "$ROOT_DIR/.installed" ] && [ -d "$ROOT_DIR/venv" ]; then
+    ok "Installation already detected."
+    if ask_yes_no "Run diagnostics (doctor) now?" Y; then cmd_doctor; echo; fi
+    if ask_yes_no "Start services now?" Y; then cmd_start; fi
+    return 0
+  fi
+
+  # Step 1: install
+  section "Step 1 · Install dependencies"
+  if ask_yes_no "Run installer now (scripts/app/setup.sh)?" Y; then
+    cmd_install || { err "install failed"; return 1; }
+  else
+    rc=$?
+    if [ "$rc" -eq 130 ]; then warn "Aborted by user"; return 0; fi
+    warn "Skipping install; some next steps may fail."
+  fi
+
+  # Step 2: environment
+  section "Step 2 · Environment"
+  ensure_env || true
+  # If encrypted env exists newer than plaintext, suggest decrypt
+  if [ -f "${ENV_FILE}.enc" ]; then
+    if [ ! -f "$ENV_FILE" ] || [ "${ENV_FILE}.enc" -nt "$ENV_FILE" ]; then
+      warn "Encrypted backend env found; plaintext missing or outdated."
+      if command -v sops >/dev/null 2>&1 && ask_yes_no "Decrypt backend env now?" Y; then
+        cmd_env_decrypt || warn "decrypt failed; you can run 'vibrae env decrypt' later"
+      else
+        rc=$?
+        if [ "$rc" -eq 130 ]; then warn "Aborted by user"; return 0; fi
+        warn "Skipping decrypt; run: vibrae env decrypt"
+      fi
+    fi
+  fi
+  if ask_yes_no "Open env editor to review settings?" N; then
+    cmd_env_edit
+  else
+    rc=$?
+    if [ "$rc" -eq 130 ]; then warn "Aborted by user"; return 0; fi
+    cmd_env_sync || true
+  fi
+
+  # Step 3: doctor
+  section "Step 3 · Diagnostics"
+  cmd_doctor || true
+
+  # Step 4: database init
+  section "Step 4 · Database"
+  if ask_yes_no "Initialize database now?" Y; then
+    cmd_db_init || warn "db init failed; you can retry later with 'vibrae db init'"
+  else
+    rc=$?
+    if [ "$rc" -eq 130 ]; then warn "Aborted by user"; return 0; fi
+  fi
+
+  # Step 5: start
+  section "Step 5 · Start"
+  if ask_yes_no "Start services now?" Y; then
+    cmd_start || { err "start failed"; return 1; }
+  else
+    rc=$?
+    if [ "$rc" -eq 130 ]; then warn "Aborted by user"; return 0; fi
+    echo "You can start later with: vibrae start"
+  fi
+
+  echo
+  ok "Wizard completed."
+  echo "Tips:"
+  echo "  - Run 'vibrae status' to check services"
+  echo "  - Run 'vibrae logs' to tail logs"
+}
 
 ########################################
 ## 04 ENVIRONMENT MANAGEMENT COMMANDS
@@ -598,7 +608,7 @@ cmd_url(){
 }
 
 cmd_env_show(){ ensure_env; cat "$ENV_FILE"; }
-cmd_env_edit(){ ensure_env; if [[ "$(uname)" == "Darwin" ]] && [ -z "${EDITOR}${VISUAL}" ]; then open -e "$ENV_FILE"; else ${EDITOR:-${VISUAL:-nano}} "$ENV_FILE"; fi }
+cmd_env_edit(){ ensure_env; if [[ "$(uname)" == "Darwin" ]] && [ -z "${EDITOR-}${VISUAL-}" ]; then open -e "$ENV_FILE"; else ${EDITOR:-${VISUAL:-nano}} "$ENV_FILE"; fi }
 cmd_env_set(){
   local kv="$1"; if ! echo "$kv" | grep -q '='; then err "usage: vibrae env set KEY=VALUE"; return 1; fi
   local key="${kv%%=*}"; local val="${kv#*=}"; kv_set "$key" "$val"; ok "$key set"
@@ -606,7 +616,7 @@ cmd_env_set(){
 
 # Frontend env command counterparts
 cmd_env_f_show(){ ensure_front_env; cat "$FRONT_ENV_FILE"; }
-cmd_env_f_edit(){ ensure_front_env; if [[ "$(uname)" == "Darwin" ]] && [ -z "${EDITOR}${VISUAL}" ]; then open -e "$FRONT_ENV_FILE"; else ${EDITOR:-${VISUAL:-nano}} "$FRONT_ENV_FILE"; fi }
+cmd_env_f_edit(){ ensure_front_env; if [[ "$(uname)" == "Darwin" ]] && [ -z "${EDITOR-}${VISUAL-}" ]; then open -e "$FRONT_ENV_FILE"; else ${EDITOR:-${VISUAL:-nano}} "$FRONT_ENV_FILE"; fi }
 cmd_env_f_set(){ local kv="$1"; if ! echo "$kv" | grep -q '='; then err "usage: vibrae env f-set KEY=VALUE"; return 1; fi; local key="${kv%%=*}" val="${kv#*=}"; f_kv_set "$key" "$val"; ok "frontend $key set"; }
 cmd_env_f_get(){ ensure_front_env; local k="$1"; [ -z "$k" ] && { err "usage: vibrae env f-get KEY"; return 1; }; f_kv_get "$k" || true; }
 cmd_env_f_sync(){ ensure_front_env; local defaults; defaults=$(cat <<'DEFEOF_FE'
@@ -755,7 +765,7 @@ def ok(msg):
   print(f"{color('32','[ok]')} {msg}")
 def warn(msg):
   print(f"{color('33','[warn]')} {msg}")
-mods=["fastapi","uvicorn","sqlalchemy","pydantic","jose","python_dotenv","websockets","vlc"]
+mods=["fastapi","uvicorn","sqlalchemy","pydantic","jose","dotenv","websockets","vlc"]
 missing=[]
 for m in mods:
   try:
@@ -776,7 +786,23 @@ try:
 except Exception:
   pass
 PY
-  else warn "venv not found; run scripts/app/setup.sh"; fi }
+  else warn "venv not found; run scripts/app/setup.sh"; fi
+  hdr "Sudoers"
+  if command -v sudo >/dev/null 2>&1; then
+    local sf="/etc/sudoers.d/vibrae-$USER"
+    if [ -f "$sf" ]; then
+      ok "sudoers present ($sf)"
+    else
+      if [[ "$(uname)" == "Darwin" ]]; then
+        warn "sudoers missing; run: vibrae mac sudoers"
+      else
+        warn "sudoers missing; run: vibrae systemd sudoers"
+      fi
+    fi
+  else
+    warn "sudo not found; skipping sudoers check"
+  fi
+}
 
 
 ########################################
@@ -809,6 +835,41 @@ shopt -s extglob 2>/dev/null || true
 ## 07 INTERACTIVE SHELL
 ########################################
 run_interactive(){ banner; autostart_maybe_start || true; printf "Type 'help' for commands, 'quit' to exit.\n"; while true; do if read -e -r -p "vibrae> " line; then line="${line##+([[:space:]])}"; line="${line%%+([[:space:]])}"; case "$line" in "" ) continue ;; quit|exit ) break ;; help ) usage; echo; continue ;; clear ) clear 2>/dev/null || printf '\033c'; echo; continue ;; esac; IFS=' ' read -r -a args <<< "$line"; set +e; dispatch "${args[@]}"; rc=$?; set -e; echo; else break; fi; done }
+run_interactive(){
+  banner
+  if [ ! -f "$ROOT_DIR/.installed" ] || [ ! -d "$ROOT_DIR/venv" ]; then
+    ensure_env || true
+    warn "Vibrae is not installed yet"
+    if [ -t 0 ] && [ -t 1 ]; then
+      if ask_yes_no "Launch guided install wizard now?" Y; then
+        run_wizard
+        echo
+      else
+        onboarding_message
+      fi
+    else
+      onboarding_message
+    fi
+  else
+    autostart_maybe_start || true
+  fi
+  printf "Type 'help' for commands, 'quit' to exit.\n"
+  while true; do
+    if read -e -r -p "vibrae> " line; then
+      line="${line##+([[:space:]])}"; line="${line%%+([[:space:]])}"
+      case "$line" in
+        "" ) continue ;;
+        quit|exit ) break ;;
+        help ) usage; echo; continue ;;
+        clear ) clear 2>/dev/null || printf '\033c'; echo; continue ;;
+      esac
+      IFS=' ' read -r -a args <<< "$line"
+      set +e; dispatch "${args[@]}"; rc=$?; set -e; echo
+    else
+      break
+    fi
+  done
+}
 
 ########################################
 ## 08 DISPATCH
@@ -860,6 +921,7 @@ _register doctor     cmd_doctor         "Doctor diagnostics"
 _register doc        cmd_doctor         "Alias for doctor"
 _register shell      run_interactive    "Interactive shell"
 _register sh         run_interactive    "Alias for shell"
+_register wizard     run_wizard         "Interactive install wizard"
 _register ahelp      cmd_alias_help     "Show alias help"
 _register systemd    cmd_pi_root        "Systemd (Linux) helpers"
 _register sys        cmd_pi_root        "Alias for systemd helpers"
@@ -995,6 +1057,16 @@ cmd_mac_sudoers(){
   pkill_bin="$(command -v pkill || echo /usr/bin/pkill)"
   ctl_script="$ROOT_DIR/scripts/nginxctl.sh"
   sudoers_file="/etc/sudoers.d/vibrae-${user}"
+  # Optional: --rerun|-R to remove and recreate the sudoers file
+  local rerun=""
+  case "${1-}" in
+    --rerun|-R|rerun) rerun=1; shift || true;;
+  esac
+  if [ -n "$rerun" ]; then
+    section "Reinstall sudoers"
+    echo "Removing existing sudoers (if present): $sudoers_file"
+    sudo rm -f "$sudoers_file" || true
+  fi
   if [ ! -x "$nginx_bin" ]; then warn "nginx not found; install via Homebrew (brew install nginx)"; fi
   section "Writing sudoers entry (requires admin)"
   local tmp; tmp="$(mktemp 2>/dev/null || echo "/tmp/vibrae_sudoers_${user}.$$")"
@@ -1002,7 +1074,8 @@ cmd_mac_sudoers(){
 Cmnd_Alias VIBRAE_MAC = \
   $nginx_bin, \
   $pkill_bin, \
-  /bin/bash $ctl_script
+  /bin/bash $ctl_script, \
+  $ctl_script
 $user ALL=(root) NOPASSWD: VIBRAE_MAC
 SUDO
   echo "Creating $sudoers_file"
@@ -1016,12 +1089,16 @@ SUDO
   echo "Notes:"
   echo "  - Grants NOPASSWD for nginx, pkill, and nginxctl.sh (limited to this repo path)."
   echo "  - If your repo path changes, re-run: vibrae mac sudoers"
+  if [ -n "$rerun" ]; then
+    echo "  - Reinstalled sudoers (removed old file before writing)"
+  fi
 }
 cmd_mac_root(){ case "${1-}" in -h|--help|help) _help_mac; return 0;; sudoers) shift; cmd_mac_sudoers "$@";; *) err "mac: unknown subcommand '${1-}'"; return 1;; esac }
 _help_mac(){ help_banner; section "macOS"; cat <<'HMAC'
   Usage: vibrae mac <sudoers>
 
-  sudoers    Install a limited NOPASSWD sudoers rule to control nginx
+  sudoers [--rerun|-R]
+             Install (or reinstall) a limited NOPASSWD sudoers rule to control nginx
              and the helper script without re-entering your password.
 
 Notes:
@@ -1097,7 +1174,11 @@ dispatch(){
   local cmd="${1-}"
   if [ -z "$cmd" ]; then
     if [ ! -f "$ROOT_DIR/.installed" ] || [ ! -d "$ROOT_DIR/venv" ]; then
-      if is_interactive; then run_onboarding; else onboarding_message; fi
+      if [ -t 0 ] && [ -t 1 ]; then
+        run_wizard
+      else
+        onboarding_message
+      fi
       return 0
     else
       run_interactive; return 0

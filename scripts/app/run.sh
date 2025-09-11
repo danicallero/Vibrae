@@ -239,9 +239,9 @@ if [[ "$OS_TYPE" == "Darwin" ]]; then
       sleep 1
     fi
   if [ -x "$ROOT_DIR/scripts/nginxctl.sh" ]; then
-    sudo "$ROOT_DIR/scripts/nginxctl.sh" start "$RENDERED_NGINX_CONF"
+    "$ROOT_DIR/scripts/nginxctl.sh" start "$RENDERED_NGINX_CONF" 2>/dev/null || sudo "$ROOT_DIR/scripts/nginxctl.sh" start "$RENDERED_NGINX_CONF"
   else
-    sudo nginx -c "$RENDERED_NGINX_CONF"
+    nginx -c "$RENDERED_NGINX_CONF" 2>/dev/null || sudo nginx -c "$RENDERED_NGINX_CONF"
   fi
   else
     warn "envsubst not found. Using nginx.conf as-is."
@@ -255,9 +255,9 @@ if [[ "$OS_TYPE" == "Darwin" ]]; then
       sleep 1
     fi
     if [ -x "$ROOT_DIR/scripts/nginxctl.sh" ]; then
-      sudo "$ROOT_DIR/scripts/nginxctl.sh" start "$NGINX_CONF"
+      "$ROOT_DIR/scripts/nginxctl.sh" start "$NGINX_CONF" 2>/dev/null || sudo "$ROOT_DIR/scripts/nginxctl.sh" start "$NGINX_CONF"
     else
-      sudo nginx -c "$NGINX_CONF"
+      nginx -c "$NGINX_CONF" 2>/dev/null || sudo nginx -c "$NGINX_CONF"
     fi
   fi
   fi

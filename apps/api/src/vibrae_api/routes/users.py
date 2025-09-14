@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Form, Request
 import logging
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from typing import Optional
 import os
 from vibrae_core.db import SessionLocal
 from vibrae_core.models import User
@@ -58,11 +59,28 @@ def create_user(request: UserCreateRequest, db: Session = Depends(get_db)):
 
 @router.post("/login")
 @router.post("/login/", include_in_schema=False)
-def login(request: UserLoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == request.username).first()
-    if not user or not verify_password(request.password, user.password_hash):
-        auth_log.warning("user.login fail: username=%s", request.username)
+async def login(
+    request: Request,
+    db: Session = Depends(get_db),
+    username: Optional[str] = Form(None),
+    password: Optional[str] = Form(None),
+):
+    # Case 1: JSON body
+    if request.headers.get("content-type", "").startswith("application/json"):
+        data = await request.json()
+        username = data.get("username")
+        password = data.get("password")
+
+    # Case 2: Form body (Swagger / OAuth2)
+    
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Missing credentials")
+
+    user = db.query(User).filter(User.username == username).first()
+    if not user or not verify_password(password, user.password_hash):
+        auth_log.warning("user.login fail: username=%s", username)
         raise HTTPException(status_code=401, detail="Login no válido")
+
     token = create_access_token({"sub": user.username})
     auth_log.info("user.login ok: id=%s username=%s", user.id, user.username)
     return {"access_token": token, "token_type": "bearer"}

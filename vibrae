@@ -142,73 +142,20 @@ contact_information(){ printf "%bContact%b\n" "$BOLD" "$RESET"; printf "Issues: 
 
 usage(){
   banner
-  echo "Note: Commands are cross-platform (macOS/Linux, incl. Pi) unless listed under 'Raspberry Pi' or 'macOS' helpers."
+  echo "Note: Commands are cross-platform (macOS/Linux, incl. Pi) unless listed under 'Systemd (Linux)' or 'macOS' helpers."
   echo
-  section "Core"; cat <<EOF
-  ${BOLD}version${RESET}             Show CLI version
-  ${BOLD}install${RESET}             Install/update dependencies (scripts/app/setup.sh)
-  ${BOLD}start${RESET} | up          Start all services (run.sh)
-  ${BOLD}stop${RESET} | down         Stop all services (stop.sh)
-  ${BOLD}restart${RESET}             Stop then start
-  ${BOLD}status${RESET}              Show service status (process + health)
-  ${BOLD}logs${RESET} [name] [n]     Tail logs (backend|player|serve|cloudflared). Default all; n=100
-EOF
-  section "Environment & Secrets"; cat <<EOF
-  ${BOLD}env show${RESET}            Print .env (aliases: env ls, env cat)
-  ${BOLD}env edit${RESET}            Edit .env
-  ${BOLD}env set${RESET} KEY=VALUE   Set or add a key
-  ${BOLD}env sync${RESET}            Add any missing recommended keys
-  ${BOLD}env encrypt${RESET}         Encrypt backend env (.env.backend)
-  ${BOLD}env decrypt${RESET}         Decrypt backend env
-  ${BOLD}env edit-sec${RESET}        Decrypt, edit, re-encrypt backend env
-  ${BOLD}env f-encrypt${RESET}       Encrypt frontend env (EXPO_PUBLIC_*)
-  ${BOLD}env f-decrypt${RESET}       Decrypt frontend env
-  ${BOLD}env f-edit-sec${RESET}      Decrypt, edit, re-encrypt frontend env
-  ${BOLD}env help${RESET}            Env-only help & tips
-EOF
-  section "Database"; echo "  ${BOLD}db init${RESET}             Create tables & seed admin (if absent)" 
-  section "Music Source"; cat <<EOF
-  ${BOLD}source detect${RESET}       Show resolved source (folder:/path or usb:LABEL)
-  ${BOLD}autostart${RESET} on|off    Toggle AUTOSTART (auto start on shell entry)
-EOF
-  section "Diagnostics"; cat <<EOF
-  ${BOLD}check-env${RESET}           Validate .env values
-  ${BOLD}doctor${RESET}              Check required tools & deps
-EOF
-  section "Frontend"; cat <<EOF
-  ${BOLD}front restart${RESET}       Restart only static server
-  ${BOLD}front build|export${RESET}  Build/export static web (Expo)
-  ${BOLD}front-build${RESET}         Build/export static web (Expo) [alias]
-EOF
-  section "Web & URLs"; cat <<EOF
-  ${BOLD}open${RESET}                Open web UI
-  ${BOLD}url${RESET}                 Print local/public URLs
-EOF
-  section "Aliases"; cat <<EOF
-  ahelp                  Show alias list
-  st  -> status          ce -> check-env
-  ce  -> check-env       doc -> doctor
-  sh  -> shell           ls-env|env ls|env cat -> env show
-  env get KEY            Print single env value
-EOF
-  section "Systemd (Linux)"; cat <<EOF
-  ${BOLD}systemd install${RESET}     Setup services (systemd, nginx)
-  ${BOLD}systemd start|stop|status${RESET} Manage services via systemd
-  ${BOLD}systemd logs${RESET} [unit] Tail journal for a unit
-  ${BOLD}systemd sudoers${RESET}     Add passwordless sudoers
-  (aliases: ${BOLD}sys${RESET}, ${BOLD}pi${RESET})
-EOF
-  section "macOS (helpers)"; cat <<EOF
-  ${BOLD}mac sudoers${RESET}         Add passwordless sudoers
-EOF
-  section "Misc"; cat <<EOF
-  ${BOLD}shell${RESET}               Interactive shell
-  ${BOLD}wizard${RESET}              Guided install/setup
-  ${BOLD}clear${RESET}               Clear the screen
-  ${BOLD}ahelp${RESET}               Show command aliases
-  ${BOLD}help${RESET}                Show this help
-EOF
-  line;echo
+  _print_section "Core"
+  _print_section "Environment"
+  _print_section "Database"
+  _print_section "Music Source"
+  _print_section "Diagnostics"
+  _print_section "Frontend"
+  _print_section "Web & URLs"
+  _print_section "Systemd (Linux)"
+  _print_section "macOS"
+  _print_section "Misc"
+  section "Aliases"; _print_aliases
+  line; echo
 }
 
 onboarding_message(){
@@ -834,7 +781,6 @@ shopt -s extglob 2>/dev/null || true
 ########################################
 ## 07 INTERACTIVE SHELL
 ########################################
-run_interactive(){ banner; autostart_maybe_start || true; printf "Type 'help' for commands, 'quit' to exit.\n"; while true; do if read -e -r -p "vibrae> " line; then line="${line##+([[:space:]])}"; line="${line%%+([[:space:]])}"; case "$line" in "" ) continue ;; quit|exit ) break ;; help ) usage; echo; continue ;; clear ) clear 2>/dev/null || printf '\033c'; echo; continue ;; esac; IFS=' ' read -r -a args <<< "$line"; set +e; dispatch "${args[@]}"; rc=$?; set -e; echo; else break; fi; done }
 run_interactive(){
   banner
   if [ ! -f "$ROOT_DIR/.installed" ] || [ ! -d "$ROOT_DIR/venv" ]; then
@@ -872,13 +818,19 @@ run_interactive(){
 }
 
 ########################################
-## 08 DISPATCH
+## 08 DISPATCH & REGISTRY
 ########################################
+# Registry format (TAB-separated per line to allow pipes in usage):
+# name\tfunction\tdescription\tcategory\tusage
 _COMMANDS=""
-_register(){ # name function description
+_register(){
+  # Back-compat: _register name func desc
+  # New form:    _register name func desc category usage
+  local name="$1" fn="$2" desc="${3-}" cat="${4-}" use="${5-}"
   _COMMANDS="$_COMMANDS
-$1|$2|$3"; }
-_find_fn(){ printf '%s' "$_COMMANDS" | awk -F'|' -v C="$1" 'NF>=2 && $1==C {print $2; exit}'; }
+${name}	${fn}	${desc}	${cat}	${use}"
+}
+_find_fn(){ printf '%s' "$_COMMANDS" | awk -F'\t' -v C="$1" 'NF>=2 && $1==C {print $2; exit}'; }
 _is_registered(){
   # awk exits 0 even when no match; ensure the output is non-empty
   local fn
@@ -889,54 +841,141 @@ _is_registered(){
     return 1
   fi
 }
+# Optional: subcommand registry for richer help blocks
+# Format per line: root\tsubcmd\tdescription\tusage
+_SUBCMDS=""
+_sub_register(){ _SUBCMDS="$_SUBCMDS
+${1}	${2}	${3}	${4}"; }
+_print_subcommands(){
+  local root="$1"
+  local out
+  out=$(printf '%s' "$_SUBCMDS" | awk -F'\t' -v R="$root" 'NF>=2 && $1==R {print $0}')
+  if [ -n "$out" ]; then
+    echo
+    echo "  Subcommands:"
+    printf '%s' "$out" | awk -F'\t' -v B="$BOLD" -v R="$RESET" '
+      { subcmd=$2; desc=$3; use=$4; disp=subcmd; if (use!="") disp=disp " " use;
+        if (length(disp)>maxw) maxw=length(disp); lines[NR]=disp "\t" desc }
+      END{ for(i=1;i<=NR;i++){ split(lines[i],p,"\t"); printf "    %s%-" maxw "s%s  %s\n", B, p[1], R, p[2] } }'
+  fi
+}
+# Helpers to render sections dynamically
+_print_section(){
+  local want_cat="$1"
+  section "$want_cat"
+  # Filter by category and render unique names only (avoid duplicate aliases in same category)
+  printf '%s' "$_COMMANDS" | awk -F'\t' -v CAT="$want_cat" -v B="$BOLD" -v R="$RESET" '
+    {
+      name=$1; fn=$2; desc=$3; cat=$4; use=$5
+      if (cat==CAT && name!="") {
+        if (!(fn in seenfn)) {
+          i++; disp[i]=name ((use!="")?" " use:""); dsc[i]=desc; seenfn[fn]=1
+          if (length(disp[i])>maxw) maxw=length(disp[i])
+        }
+      }
+    }
+    END{
+      for (j=1;j<=i;j++) {
+        printf "  %s%-" maxw "s%s", B, disp[j], R
+        if (dsc[j]!="") printf "  %s", dsc[j]
+        printf "\n"
+      }
+    }'
+}
+_print_aliases(){
+  # Group aliases: any name sharing the same function with a different primary
+  printf '%s' "$_COMMANDS" | awk -F'\t' -v B="$BOLD" -v R="$RESET" '
+    NF>=3 {
+      fn=$2; name=$1;
+      if (!(fn in first)) { first[fn]=name; }
+      else { aliases[fn]=aliases[fn] " " name; }
+    }
+    END {
+      for (f in aliases) {
+        line=aliases[f]; sub(/^ /, "", line)
+        printf "  %s -> %s\n", line, first[f]
+      }
+    }'
+}
 # List unique primary commands only (dedupe aliases)
 # We consider the first occurrence of a function as the primary entry
 ## Unused helpers removed: _list_commands and _list_commands_by_category
 
-# Register primary commands
-_register version    cmd_version        "Show CLI version"
-_register install    cmd_install        "Install/update dependencies"
-_register start      cmd_start          "Start all services"
-_register up         cmd_start          "Alias for start"
-_register stop       cmd_stop           "Stop all services"
-_register down       cmd_stop           "Alias for stop"
-_register restart    cmd_restart        "Restart services"
-_register status     cmd_status         "Show service status"
-_register st         cmd_status         "Alias for status"
-_register logs       cmd_logs           "Tail logs"
-_register front-restart cmd_front_restart "Restart static frontend server"
-_register front       cmd_front_root     "Frontend operations"
-_register front-build cmd_front_build    "Build/export static frontend"
-_register open       cmd_open           "Open primary URL"
-_register url        cmd_url            "Print URLs"
-_register contact    contact_information "Contact info"
-_register github     cmd_github         "Open GitHub repository"
-_register env        cmd_env_root       "Environment subcommands"
-_register db-init    cmd_db_init        "Initialize database"
-_register autostart  cmd_autostart      "Toggle autostart"
-_register source-detect cmd_source_detect "Detect music source"
-_register check-env  cmd_check_env      "Validate environment"
-_register ce         cmd_check_env      "Alias for check-env"
-_register doctor     cmd_doctor         "Doctor diagnostics"
-_register doc        cmd_doctor         "Alias for doctor"
-_register shell      run_interactive    "Interactive shell"
-_register sh         run_interactive    "Alias for shell"
-_register wizard     run_wizard         "Interactive install wizard"
-_register ahelp      cmd_alias_help     "Show alias help"
-_register systemd    cmd_pi_root        "Systemd (Linux) helpers"
-_register sys        cmd_pi_root        "Alias for systemd helpers"
-_register pi         cmd_pi_root        "Alias for systemd helpers"
-_register mac        cmd_mac_root       "macOS helpers"
-_register help       cmd_help           "Show help"
-_register --help     cmd_help           "Show help"
-_register -h         cmd_help           "Show help"
-_register ls-env     cmd_env_show       "Alias for env show"
+# Register primary commands (name func desc category usage)
+_register version       cmd_version         "Show CLI version"                 "Core"              ""
+_register install       cmd_install         "Install/update dependencies"       "Core"              ""
+_register start         cmd_start           "Start all services"                "Core"              ""
+_register up            cmd_start           "Alias for start"                   "Aliases"           ""
+_register stop          cmd_stop            "Stop all services"                 "Core"              ""
+_register down          cmd_stop            "Alias for stop"                    "Aliases"           ""
+_register restart       cmd_restart         "Restart services"                  "Core"              ""
+_register status        cmd_status          "Show service status"               "Core"              ""
+_register st            cmd_status          "Alias for status"                  "Aliases"           ""
+_register logs          cmd_logs            "Tail logs"                         "Core"              "[name] [n]"
+_register front-restart cmd_front_restart   "Restart static frontend server"    "Frontend"          ""
+_register front         cmd_front_root      "Frontend operations"               "Frontend"          "<subcommand>"
+_register front-build   cmd_front_build     "Build/export static frontend"      "Frontend"          "[--restart]"
+_register open          cmd_open            "Open primary URL"                  "Web & URLs"        ""
+_register url           cmd_url             "Print URLs"                        "Web & URLs"        ""
+_register contact       contact_information "Contact info"                      "Misc"              ""
+_register github        cmd_github          "Open GitHub repository"            "Misc"              ""
+_register env           cmd_env_root        "Environment subcommands"           "Environment"       "<subcommand>"
+_register db-init       cmd_db_init         "Initialize database"               "Database"          ""
+_register autostart     cmd_autostart       "Toggle autostart"                  "Music Source"      "on|off"
+_register source-detect cmd_source_detect   "Detect music source"               "Music Source"      ""
+_register check-env     cmd_check_env       "Validate environment"              "Diagnostics"       ""
+_register ce            cmd_check_env       "Alias for check-env"               "Aliases"           ""
+_register doctor        cmd_doctor          "Doctor diagnostics"                "Diagnostics"       ""
+_register doc           cmd_doctor          "Alias for doctor"                  "Aliases"           ""
+_register shell         run_interactive     "Interactive shell"                 "Misc"              ""
+_register sh            run_interactive     "Alias for shell"                   "Aliases"           ""
+_register wizard        run_wizard          "Interactive install wizard"        "Misc"              ""
+_register ahelp         cmd_alias_help      "Show alias help"                   "Misc"              ""
+_register systemd       cmd_pi_root         "Systemd (Linux) helpers"           "Systemd (Linux)"   "<subcommand>"
+_register sys           cmd_pi_root         "Alias for systemd helpers"         "Aliases"           ""
+_register pi            cmd_pi_root         "Alias for systemd helpers"         "Aliases"           ""
+_register mac           cmd_mac_root        "macOS helpers"                     "macOS"             "<subcommand>"
+_register help          cmd_help            "Show help"                         "Misc"              ""
+_register --help        cmd_help            "Show help"                         "Aliases"           ""
+_register -h            cmd_help            "Show help"                         "Aliases"           ""
+_register ls-env        cmd_env_show        "Alias for env show"                "Aliases"           ""
+
+# Subcommand registrations (for richer help)
+_sub_register env        "show|ls|cat"      "Print backend env (.env.backend)"            ""
+_sub_register env        edit               "Open backend env file in editor"             ""
+_sub_register env        set                "Add or replace a key"                         "KEY=VALUE"
+_sub_register env        get                "Print single value (empty if unset)"         "KEY"
+_sub_register env        sync               "Append missing recommended keys"              ""
+_sub_register env        encrypt            "Encrypt backend env -> .env.backend.enc"     ""
+_sub_register env        decrypt            "Decrypt encrypted backend env to plaintext"  ""
+_sub_register env        edit-sec           "Decrypt, edit, re-encrypt backend env"       ""
+
+_sub_register env-front  "f-show|f-cat"     "Print frontend env (.env.frontend)"          ""
+_sub_register env-front  f-edit             "Open frontend env file in editor"            ""
+_sub_register env-front  f-set              "Set/add a frontend key"                      "KEY=VALUE"
+_sub_register env-front  f-get              "Print frontend single value"                 "KEY"
+_sub_register env-front  f-sync             "Append missing recommended frontend keys"    ""
+_sub_register env-front  f-encrypt          "Encrypt frontend env"                        ""
+_sub_register env-front  f-decrypt          "Decrypt frontend env"                        ""
+_sub_register env-front  f-edit-sec         "Decrypt, edit, re-encrypt frontend env"      ""
+
+_sub_register front      restart            "Restart static server (npx serve) only"      ""
+_sub_register front      "build|export|rebuild" "Rebuild static web (Expo export)"        ""
+
+_sub_register systemd    install            "Configure systemd + nginx on Linux"          "[--sudoers|-S]"
+_sub_register systemd    start              "Start services via systemd (sudo)"           ""
+_sub_register systemd    stop               "Stop services (sudo)"                         ""
+_sub_register systemd    status             "Systemd status summary (sudo)"                ""
+_sub_register systemd    logs               "Follow journal for unit (sudo)"               "[unit]"
+_sub_register systemd    sudoers            "Add limited NOPASSWD rule"                    ""
+
+_sub_register mac        sudoers            "Install limited NOPASSWD sudoers rule"        "[--rerun|-R]"
 
 cmd_version(){ echo "vibrae ${VERSION}"; }
 _help_version(){ help_banner; section "Version"; echo "  vibrae $VERSION"; }
 cmd_env_root(){
   case "${1-}" in
-    -h|--help|help) _help_env; return 0;;
+    ''|-h|--help|help) _help_env; return 0;;
     show|ls|cat) shift; cmd_env_show;;
     edit) shift; cmd_env_edit;;
     encrypt) shift; cmd_env_encrypt;;
@@ -961,29 +1000,11 @@ _help_env(){
   help_banner
   section "Backend Environment"
   echo "  Usage: vibrae env <subcommand> [args]"; echo
-  echo "  Subcommands:"; cat <<EOC
-    show|ls|cat        Print backend env (.env.backend)
-    edit               Open env file in editor
-    set KEY=VALUE      Add or replace a key
-    get KEY            Print single value (empty if unset)
-    sync               Append missing recommended keys (non-destructive)
-    encrypt            Encrypt backend env -> .env.backend.enc
-    decrypt            Decrypt encrypted backend env to plaintext
-    edit-sec           Decrypt, open editor, re-encrypt
-EOC
-    section "Frontend Environment"
-    echo "  Usage: vibrae env <subcommand> [args]"; echo
-    echo "  Subcommands:"; cat <<EOC
-    f-show|f-cat       Print frontend env (.env.frontend)
-    f-edit             Open frontend env file
-    f-set KEY=VALUE    Set/add a frontend key
-    f-get KEY          Print frontend single value
-    f-sync             Append missing recommended frontend keys
-    f-encrypt          Encrypt frontend env
-    f-decrypt          Decrypt frontend env
-    f-edit-sec         Decrypt, edit, re-encrypt frontend env
-
-EOC
+  _print_subcommands env
+  section "Frontend Environment"
+  echo "  Usage: vibrae env <subcommand> [args]"; echo
+  _print_subcommands env-front
+  echo
   echo "Notes:"; cat <<'EOC'
     - Never commit plaintext env files
     - If only .enc exists run: vibrae env decrypt
@@ -1048,14 +1069,44 @@ HPI
 ########################################
 ## 07b MAC HELPERS
 ########################################
+_resolve_abs(){
+  # Usage: _resolve_abs <name> [fallback_paths...]
+  # Prints an absolute, executable path for the command name. If `command -v` returns
+  # a builtin (e.g., "kill") or a non-absolute, tries provided fallbacks. As a last
+  # resort for known builtins, returns a sensible default to avoid sudoers parse errors.
+  local name="$1"; shift || true
+  local res
+  res="$(command -v "$name" 2>/dev/null || true)"
+  case "$res" in
+    /*)
+      if [ -x "$res" ]; then echo "$res"; return 0; fi
+      ;;
+  esac
+  # Try provided fallbacks
+  local p
+  for p in "$@"; do
+    if [ -n "$p" ] && [ -x "$p" ]; then echo "$p"; return 0; fi
+  done
+  # Known special cases
+  case "$name" in
+    kill)
+      for p in /bin/kill /usr/bin/kill; do [ -x "$p" ] && echo "$p" && return 0; done
+      echo /bin/kill; return 0;;
+  esac
+  # Fallback to whatever was found (may be empty); better than an unexpanded var.
+  echo "$res"
+}
 cmd_mac_sudoers(){
   banner; section "macOS sudoers"
   if [[ "$(uname)" != "Darwin" ]]; then warn "This helper is intended for macOS"; fi
   local user="$USER"
-  local nginx_bin pkill_bin ctl_script sudoers_file
-  nginx_bin="$(command -v nginx || echo /usr/local/bin/nginx)"
-  pkill_bin="$(command -v pkill || echo /usr/bin/pkill)"
+  local nginx_bin pkill_bin ctl_script run_script stop_script kill_bin sudoers_file
+  nginx_bin="$(_resolve_abs nginx /opt/homebrew/bin/nginx /usr/local/bin/nginx /usr/sbin/nginx)"
+  pkill_bin="$(_resolve_abs pkill /usr/bin/pkill /usr/local/bin/pkill)"
+  kill_bin="$(_resolve_abs kill /bin/kill /usr/bin/kill)"
   ctl_script="$ROOT_DIR/scripts/nginxctl.sh"
+  run_script="$ROOT_DIR/scripts/app/run.sh"
+  stop_script="$ROOT_DIR/scripts/app/stop.sh"
   sudoers_file="/etc/sudoers.d/vibrae-${user}"
   # Optional: --rerun|-R to remove and recreate the sudoers file
   local rerun=""
@@ -1074,10 +1125,23 @@ cmd_mac_sudoers(){
 Cmnd_Alias VIBRAE_MAC = \
   $nginx_bin, \
   $pkill_bin, \
+  $kill_bin, \
   /bin/bash $ctl_script, \
-  $ctl_script
+  $ctl_script, \
+  $run_script, \
+  $stop_script
 $user ALL=(root) NOPASSWD: VIBRAE_MAC
 SUDO
+  # Validate before installing to prevent sudoers lockout or parse errors
+  local visudo_bin
+  visudo_bin="$(command -v visudo || echo /usr/sbin/visudo)"
+  if ! sudo "$visudo_bin" -cf "$tmp"; then
+    err "sudoers validation failed (visudo). Not installing."
+    echo "---- Proposed sudoers content ----"
+    sed -n '1,120p' "$tmp" || true
+    rm -f "$tmp" 2>/dev/null || true
+    return 1
+  fi
   echo "Creating $sudoers_file"
   if ! sudo install -m 440 "$tmp" "$sudoers_file"; then
     err "failed to write sudoers"
@@ -1087,13 +1151,13 @@ SUDO
   rm -f "$tmp" 2>/dev/null || true
   ok "sudoers installed: $sudoers_file"
   echo "Notes:"
-  echo "  - Grants NOPASSWD for nginx, pkill, and nginxctl.sh (limited to this repo path)."
+  echo "  - Grants NOPASSWD for nginx, pkill, kill, nginxctl.sh, run.sh, and stop.sh (limited to this repo path)."
   echo "  - If your repo path changes, re-run: vibrae mac sudoers"
   if [ -n "$rerun" ]; then
     echo "  - Reinstalled sudoers (removed old file before writing)"
   fi
 }
-cmd_mac_root(){ case "${1-}" in -h|--help|help) _help_mac; return 0;; sudoers) shift; cmd_mac_sudoers "$@";; *) err "mac: unknown subcommand '${1-}'"; return 1;; esac }
+cmd_mac_root(){ case "${1-}" in ''|-h|--help|help) _help_mac; return 0;; sudoers) shift; cmd_mac_sudoers "$@";; *) err "mac: unknown subcommand '${1-}'"; return 1;; esac }
 _help_mac(){ help_banner; section "macOS"; cat <<'HMAC'
   Usage: vibrae mac <sudoers>
 
@@ -1106,33 +1170,10 @@ Notes:
   - On macOS, binding to :80 requires elevated privileges; this avoids prompts.
 HMAC
 }
-cmd_alias_help(){ echo "Aliases:"; echo "  up->start down->stop st->status ce->check-env doc->doctor sh->shell"; }
-_help_start(){ help_banner; section "Start"; cat <<'HSTART'
-  Usage: vibrae start
-
-  Starts backend (uvicorn), static server (if export present), and tunnel if configured.
-  Equivalent alias: up
-  Fails if setup not completed (missing .installed or venv).
-HSTART
-}
-_help_logs(){ help_banner; section "Logs"; cat <<'HLOGS'
-  Usage: vibrae logs [name] [n]
-
-  name: backend|player|serve|cloudflared (default: all)
-  n:    number of lines (default 100)
-
-  Examples:
-    vibrae logs
-    vibrae logs backend 200
-HLOGS
-}
-_help_front_restart(){ help_banner; section "Front Restart"; cat <<'HFR'
-  Usage: vibrae front restart
-
-  Restarts only the static file server (npx serve) if available.
-  Does NOT restart backend services.
-HFR
-}
+cmd_alias_help(){ echo "Aliases:"; _print_aliases; }
+_help_start(){ help_banner; section "Start"; _print_cmd_help_block start; }
+_help_logs(){ help_banner; section "Logs"; _print_cmd_help_block logs; }
+_help_front_restart(){ help_banner; section "Front Restart"; _print_cmd_help_block front-restart; }
 cmd_front_root(){
   case "${1-}" in
     -h|--help|help|'') _help_front; return 0;;
@@ -1141,34 +1182,92 @@ cmd_front_root(){
     *) err "front: unknown subcommand '${1-}'"; _help_front; return 1;;
   esac
 }
-_help_front(){ help_banner; section "Frontend"; cat <<'HF'
-  Usage: vibrae front <subcommand>
-
-  Subcommands:
-    restart            Restart static server (npx serve) only
-  build|export       Rebuild static web (Expo export)
+_help_front(){
+  help_banner; section "Frontend"; _print_cmd_help_block front; _print_subcommands front; cat <<'HF_NOTES'
 
   Notes:
     - Not for env operations (use: vibrae env ...)
     - Falls back to backend static serving if npx serve missing
-  - Use 'vibrae front build --restart' to rebuild and restart in one step
-HF
+    - Use 'vibrae front build --restart' to rebuild and restart in one step
+HF_NOTES
 }
-_help_front_build(){ help_banner; section "Front Build"; cat <<'HFB'
-  Usage: vibrae front build [--restart|-r]
-
-  Runs Expo web export in apps/web:
-  - Stops the static server during the build (if running)
-    - Installs dependencies (npm ci) if node_modules is missing
-    - Executes: npx expo export --platform web
-    - Places output at FRONTEND_DIST (default /apps/web/dist)
-
-  Options:
-    --restart, -r   After building, restart the static server (same as 'vibrae front restart')
-HFB
+_help_front_build(){ help_banner; section "Front Build"; _print_cmd_help_block front-build; }
+cmd_help(){ if [ -n "${1-}" ]; then _show_cmd_help "$1"; else usage; fi }
+_show_cmd_help(){
+  HELP_BANNER_SHOWN=""
+  local c="$1"; local helper="_help_${c//-/_}"
+  if command -v "$helper" >/dev/null 2>&1; then "$helper"; return $?; fi
+  _gen_cmd_help "$c"
 }
-cmd_help(){ usage; }
-_show_cmd_help(){ HELP_BANNER_SHOWN=""; local c="$1"; local helper="_help_${c//-/_}"; if command -v "$helper" >/dev/null 2>&1; then "$helper"; else err "No detailed help for '$c'"; fi }
+
+# Auto-generate detailed help for commands using the registry metadata
+_gen_cmd_help(){
+  local c="$1"; help_banner
+  # Resolve primary (canonical) command name for title when alias is used
+  local pname; pname="$(_primary_name_for "$c")"
+  # Title from canonical name (kebab-case -> words). Capitalize first letter (portable)
+  local title="${pname//-/ }"
+  local first_char rest first_up
+  first_char="${title%${title#?}}"; rest="${title#?}"
+  first_up="$(printf '%s' "$first_char" | tr '[:lower:]' '[:upper:]')"; title="${first_up}${rest}"
+  section "$title"
+  _print_cmd_help_block "$c"
+}
+
+# Print standard Usage/Description/Category/Aliases block for a command (no header)
+_print_cmd_help_block(){
+  local c="$1"
+  printf '%s' "$_COMMANDS" | awk -F"\t" -v CMD="$c" -v B="$BOLD" -v R="$RESET" '
+    BEGIN{ found=0 }
+    {
+      name=$1; fn=$2; desc=$3; cat=$4; use=$5
+      if (name==CMD) { c_fn=fn; c_name=name; c_desc=desc; c_cat=cat; c_use=use; found=1 }
+      if (fn!="" && !(fn in first)) { first[fn]=name }
+      if (fn!="" && name!="") { names_for_fn[fn]=(names_for_fn[fn] " " name) }
+      if (cat!="Aliases" && !(fn in primary)) { primary[fn]=name; p_use[fn]=use; p_desc[fn]=desc; p_cat[fn]=cat }
+    }
+    END{
+      if (!found) { printf "✖ Unknown command: %s\n", CMD; exit 1 }
+      p=primary[c_fn]; if (p=="") p=c_name
+      use=p_use[c_fn]; if (use=="") use=c_use
+      desc=p_desc[c_fn]; if (desc=="") desc=c_desc
+      cat=p_cat[c_fn]; if (cat=="") cat=c_cat
+      # Usage
+      printf "  %sUsage:%s vibrae %s", B, R, p
+      if (use!="") printf " %s", use
+      printf "\n\n"
+      # Description
+      if (desc!="") printf "  %sDescription:%s %s\n\n", B, R, desc
+      # Category
+      if (cat!="") printf "  %sCategory:%s %s\n\n", B, R, cat
+      # Aliases
+      line=names_for_fn[c_fn]; sub(/^ /, "", line)
+      cnt=0; split(line, arr, /[ ]+/); out=""
+      for (i in arr) { n=arr[i]; if (n==p || n=="") continue; cnt++; out=out ((out!="")?", ":"") n }
+      if (cnt>0) printf "  %sAliases:%s %s\n", B, R, out
+    }'
+}
+
+# Return the primary (non-Aliases) registered name for a command or the command itself
+_primary_name_for(){
+  local c="$1"
+  printf '%s' "$_COMMANDS" | awk -F'\t' -v CMD="$c" '
+    {
+      name=$1; fn=$2; cat=$4
+      if (name==CMD) tgt_fn=fn
+      if (fn!="" && !(fn in first)) { first[fn]=name }
+      if (fn!="" && !(fn in primary) && cat!="Aliases") { primary[fn]=name }
+    }
+    END{
+      if (tgt_fn!="") {
+        if (primary[tgt_fn]!="") print primary[tgt_fn];
+        else if (first[tgt_fn]!="") print first[tgt_fn];
+        else print CMD;
+      } else print CMD;
+    }'
+}
+
+## Duplicate subcommand registry removed; defined earlier alongside other registry helpers
 
 dispatch(){
   local cmd="${1-}"

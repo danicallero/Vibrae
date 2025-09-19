@@ -8,40 +8,7 @@
 #   01 Path Resolution & Environment Files
 #   02 Colors & Output Helpers
 #   03 Generic Utilities (kv store, truthy, etc.)
-#   04 Environment Management (ensure, sync, set/get)
-#   05 Encryption (sops helpers)
-#   06 Commands (install/start/stop/...)
-#   07 Pi Helpers
-#   07b Mac Helpers
-#   08 Interactive Shell
-#   09 Dispatch & Main
-
-########################################
-## 00 PRELUDE & GLOBALS
-########################################
-set -o pipefail
-IFS=$'\n\t'
-
-# Fallback minimal error printer before colors load (overridden later with colors)
-err(){ printf 'x %s\n' "$*" 1>&2; }
-
-VERSION="0.4.2"
-
-trap_handler(){
-  local rc=$?; local ln=${LINENO}
-  # Skip trap until fully init
-  if [ -z "${_VIBRAE_TRAP_READY:-}" ] || [ -n "${_VIBRAE_SUPPRESS_TRAP:-}" ]; then return; fi
-  err "unexpected error (line ${ln})"; return $rc
-}
-# Trap disabled (too noisy)
-unset _VIBRAE_SUPPRESS_TRAP 2>/dev/null || true
-
-# Enable -u later
-DEFER_SET_U=1
-
-########################################
-## 01 PATH RESOLUTION & ENV FILES
-########################################
+## 01 PATH RESOLUTION & ENV FILES (minimal runtime)
 resolve_self(){
   local src="${BASH_SOURCE[0]}"
   while [ -h "$src" ]; do
@@ -54,57 +21,17 @@ resolve_self(){
 SCRIPT_PATH="$(resolve_self)"
 ROOT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
 ENV_FILE="$ROOT_DIR/config/env/.env.backend"
-# Example env path (used by ensure_env)
 ENV_EXAMPLE="$ROOT_DIR/config/env/.env.backend.example"
-# Default logs directory (can be overridden via environment)
 : "${LOG_DIR:=$ROOT_DIR/logs}"
 
-########################################
-## 02 COLORS & OUTPUT HELPERS
-########################################
-# Detect terminal support and initialize color/style variables
-if [ -t 1 ] && command -v tput >/dev/null 2>&1; then
-  # Basic ANSI colors via tput; fall back to empty if term lacks colors
-  if [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
-    BOLD="$(tput bold)"; RESET="$(tput sgr0)"
-    RED="$(tput setaf 1)"; GREEN="$(tput setaf 2)"; YELLOW="$(tput setaf 3)"
-    BLUE="$(tput setaf 4)"; CYAN="$(tput setaf 6)"; GREY="$(tput setaf 8 2>/dev/null || tput setaf 7)"
-  else
-    BOLD=""; RESET=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; GREY=""; CYAN=""
-  fi
+# Source extracted helpers (colors, generic utilities, sops)
+if [ -f "$ROOT_DIR/lib/vibrae_helpers.sh" ]; then
+  # shellcheck disable=SC1090
+  source "$ROOT_DIR/lib/vibrae_helpers.sh"
 else
-  BOLD=""; RESET=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; GREY=""; CYAN=""
+  echo "helper library missing: $ROOT_DIR/lib/vibrae_helpers.sh" 1>&2
+  exit 1
 fi
-
-# Respect NO_COLOR (https://no-color.org/) and VIBRAE_NO_COLOR=1 to disable any styling
-if [ -n "${NO_COLOR-}" ] || [ "${VIBRAE_NO_COLOR-0}" = "1" ]; then
-  BOLD=""; RESET=""; RED=""; GREEN=""; YELLOW=""; BLUE=""; GREY=""; CYAN=""
-fi
-
-# Centralized styles/icons
-STYLE_HEADER="${BOLD}${CYAN}"
-STYLE_BANNER="${BOLD}${BLUE}"
-ICON_OK="✔"; ICON_WARN="!"; ICON_ERR="✖"
-
-# Styled output helpers
-ok(){ printf "%b%s%b %s\n" "$GREEN" "$ICON_OK" "$RESET" "$*"; }
-warn(){ printf "%b%s%b %s\n" "$YELLOW" "$ICON_WARN" "$RESET" "$*"; }
-err(){ printf "%b%s%b %s\n" "$RED" "$ICON_ERR" "$RESET" "$*" 1>&2; }
-# Styled header and separator for improved readability
-hdr(){ printf "%b%s%s%s%b\n" "$STYLE_HEADER" "" "$*" "" "$RESET"; }
-# Draw a line with subtle grey when available
-line(){
-  local ch
-  if [ -n "$GREY" ]; then
-    ch="─"
-    printf "%b" "$GREY"
-  else
-    ch="-"
-  fi
-  printf '%s\n' "$(printf '%*s' 50 '' | tr ' ' "$ch")"
-  [ -n "$GREY" ] && printf "%b" "$RESET" || true
-}
-section(){ echo; hdr "$1"; line; }
 
 BANNER_WIDTH=50
 #banner(){ printf "=== %bVibrae%b — Sound, simplified===\n" "$BOLD" "$RESET"; }
@@ -366,15 +293,10 @@ run_wizard(){
 ## 04 ENVIRONMENT MANAGEMENT COMMANDS
 ########################################
 
-cmd_install(){ run_script scripts/app/setup.sh; }
-cmd_start(){
-  # Require install stamp and venv
-  if [ ! -f "$ROOT_DIR/.installed" ]; then err "setup has not been run. Run: scripts/app/setup.sh or 'vibrae install'"; return 1; fi
-  if [ ! -d "$ROOT_DIR/venv" ]; then err "missing venv. Run: scripts/app/setup.sh"; return 1; fi
-  run_script run.sh;
-}
-cmd_stop(){ run_script stop.sh; }
-cmd_restart(){ [ -f "$ROOT_DIR/.installed" ] || { err "setup has not been run. Run: scripts/app/setup.sh or 'vibrae install'"; return 1; }; [ -d "$ROOT_DIR/venv" ] || { err "missing venv. Run: scripts/app/setup.sh"; return 1; }; license_notice; cmd_stop || true; cmd_start; }
+cmd_install(){ cmd_impl_install "$@"; }
+cmd_start(){ cmd_impl_start "$@"; }
+cmd_stop(){ cmd_impl_stop "$@"; }
+cmd_restart(){ cmd_impl_restart "$@"; }
 
 service_row(){ local name="$1" patt="$2" psout="$3"; if echo "$psout" | grep -E "$patt" | grep -v grep >/dev/null; then printf "  %b●%b %-12s %brunning%b\n" "$GREEN" "$RESET" "$name" "$GREEN" "$RESET"; else printf "  %b○%b %-12s %bstopped%b\n" "$GREY" "$RESET" "$name" "$GREY" "$RESET"; fi }
 cmd_status(){
@@ -471,53 +393,9 @@ cmd_logs(){
   fi
 }
 
-cmd_front_restart(){
-  case "${1-}" in -h|--help|help) _help_front_restart; return 0;; esac
-  banner; section "Frontend restart"
-  pkill -f "(serve -s|npx serve)" >/dev/null 2>&1 || true
-  sleep 0.5
-  FRONTEND_DIST_VAL="$(kv_get FRONTEND_DIST)"; [ -n "$FRONTEND_DIST_VAL" ] || FRONTEND_DIST_VAL="/apps/web/dist"
-  SERVE_ROOT="$ROOT_DIR$FRONTEND_DIST_VAL"
-  PORT_VAL="$(kv_get FRONTEND_PORT)"; [ -n "$PORT_VAL" ] || PORT_VAL=9081
-  if command -v npx >/dev/null 2>&1 && [ -d "$SERVE_ROOT" ]; then
-    mkdir -p "$LOG_DIR" 2>/dev/null || true
-    echo "----- $(date) front restart on :$PORT_VAL -----" >> "$LOG_DIR/serve.log"
-    (cd "$ROOT_DIR" && FRONTEND_MODE=npx nohup npx serve -s "$SERVE_ROOT" -l "$PORT_VAL" >> "$LOG_DIR/serve.log" 2>&1 &)
-    ok "frontend restarted on :$PORT_VAL (mode=npx)"
-  else
-    warn "npx or export missing; backend will serve static files if available"
-  fi
-}
+cmd_front_restart(){ cmd_impl_front_restart "$@"; }
 
-cmd_front_build(){
-  case "${1-}" in -h|--help|help) _help_front_build; return 0;; esac
-  banner; section "Frontend build"
-  local APP_DIR="$ROOT_DIR/apps/web"
-  if [ ! -d "$APP_DIR" ]; then err "apps/web not found"; return 1; fi
-  if ! command -v node >/dev/null 2>&1 || ! command -v npx >/dev/null 2>&1; then err "node/npm (npx) not found. Install Node.js."; return 1; fi
-  local do_restart=0
-  case "${1-}" in --restart|-r) do_restart=1;; esac
-  # Stop static server while rebuilding to avoid serving partial files
-  section "Stopping static server (if running)"
-  pkill -f "(serve -s|npx serve)" >/dev/null 2>&1 || true
-  sleep 0.5
-  # Install deps if node_modules missing
-  if [ ! -d "$APP_DIR/node_modules" ]; then
-    section "Installing frontend dependencies (npm ci)"
-    (cd "$APP_DIR" && npm ci) || { err "npm ci failed"; return 1; }
-  fi
-  section "Exporting static web build (expo export)"
-  (cd "$APP_DIR" && npx expo export --platform web) || { err "expo export failed"; return 1; }
-  # Verify build output exists
-  local FRONTEND_DIST_VAL; FRONTEND_DIST_VAL="$(kv_get FRONTEND_DIST)"; [ -n "$FRONTEND_DIST_VAL" ] || FRONTEND_DIST_VAL="/apps/web/dist"
-  local SERVE_ROOT="$ROOT_DIR$FRONTEND_DIST_VAL"
-  if [ -d "$SERVE_ROOT" ]; then ok "build ready at $FRONTEND_DIST_VAL"; else warn "build output not found at $FRONTEND_DIST_VAL"; fi
-  if [ $do_restart -eq 1 ]; then
-    cmd_front_restart
-  else
-    echo "Tip: run 'vibrae front restart' to serve the new build."
-  fi
-}
+cmd_front_build(){ cmd_impl_front_build "$@"; }
 
 cmd_github(){
   local url="https://github.com/danicallero/Vibrae"
@@ -554,26 +432,20 @@ cmd_url(){
   echo "$kvs" | sed 's/^/  /'
 }
 
-cmd_env_show(){ ensure_env; cat "$ENV_FILE"; }
-cmd_env_edit(){ ensure_env; if [[ "$(uname)" == "Darwin" ]] && [ -z "${EDITOR-}${VISUAL-}" ]; then open -e "$ENV_FILE"; else ${EDITOR:-${VISUAL:-nano}} "$ENV_FILE"; fi }
-cmd_env_set(){
-  local kv="$1"; if ! echo "$kv" | grep -q '='; then err "usage: vibrae env set KEY=VALUE"; return 1; fi
-  local key="${kv%%=*}"; local val="${kv#*=}"; kv_set "$key" "$val"; ok "$key set"
-}
+cmd_env_show(){ cmd_impl_env_show "$@"; }
+cmd_env_edit(){ cmd_impl_env_edit "$@"; }
+cmd_env_set(){ cmd_impl_env_set "$@"; }
 
 # Frontend env command counterparts
-cmd_env_f_show(){ ensure_front_env; cat "$FRONT_ENV_FILE"; }
-cmd_env_f_edit(){ ensure_front_env; if [[ "$(uname)" == "Darwin" ]] && [ -z "${EDITOR-}${VISUAL-}" ]; then open -e "$FRONT_ENV_FILE"; else ${EDITOR:-${VISUAL:-nano}} "$FRONT_ENV_FILE"; fi }
-cmd_env_f_set(){ local kv="$1"; if ! echo "$kv" | grep -q '='; then err "usage: vibrae env f-set KEY=VALUE"; return 1; fi; local key="${kv%%=*}" val="${kv#*=}"; f_kv_set "$key" "$val"; ok "frontend $key set"; }
-cmd_env_f_get(){ ensure_front_env; local k="$1"; [ -z "$k" ] && { err "usage: vibrae env f-get KEY"; return 1; }; f_kv_get "$k" || true; }
-cmd_env_f_sync(){ ensure_front_env; local defaults; defaults=$(cat <<'DEFEOF_FE'
-EXPO_PUBLIC_API_BASE=/api
-DEFEOF_FE
-); local added=0; while IFS= read -r line; do [ -z "$line" ] && continue; local key="${line%%=*}" val="${line#*=}"; if ! grep -qE "^${key}=" "$FRONT_ENV_FILE" 2>/dev/null; then echo "${key}=${val}" >> "$FRONT_ENV_FILE"; added=$((added+1)); fi; done <<< "$defaults"; [ $added -gt 0 ] && ok "Frontend env: added $added missing keys" || ok "Frontend env already has recommended keys"; }
+cmd_env_f_show(){ cmd_impl_env_f_show "$@"; }
+cmd_env_f_edit(){ cmd_impl_env_f_edit "$@"; }
+cmd_env_f_set(){ cmd_impl_env_f_set "$@"; }
+cmd_env_f_get(){ cmd_impl_env_f_get "$@"; }
+cmd_env_f_sync(){ cmd_impl_env_f_sync "$@"; }
 
 env_help(){ _help_env; }
 
-env_get(){ ensure_env; local k="$1"; [ -z "$k" ] && { err "usage: vibrae env get KEY"; return 1; }; kv_get "$k" || true; }
+env_get(){ cmd_impl_env_get "$@"; }
 
 # --- SOPS environment encryption helpers ---
 sops_check(){ if ! command -v sops >/dev/null 2>&1; then err "sops not installed (https://github.com/getsops/sops)"; return 1; fi }
@@ -820,6 +692,13 @@ run_interactive(){
 ########################################
 ## 08 DISPATCH & REGISTRY
 ########################################
+##
+## Registry: central command index
+## -------------------------------
+## This block holds lightweight metadata for top-level commands. Add new commands
+## by calling `_register` (name fn desc category usage). Command functions are
+## implemented in the 'Command Implementations' section below.
+##
 # Registry format (TAB-separated per line to allow pipes in usage):
 # name\tfunction\tdescription\tcategory\tusage
 _COMMANDS=""
@@ -919,6 +798,19 @@ _register open          cmd_open            "Open primary URL"                  
 _register url           cmd_url             "Print URLs"                        "Web & URLs"        ""
 _register contact       contact_information "Contact info"                      "Misc"              ""
 _register github        cmd_github          "Open GitHub repository"            "Misc"              ""
+## End registry
+
+########################################
+## 09 COMMAND IMPLEMENTATIONS
+########################################
+## Implementations of the functions referenced above live here. Keep functions
+## short and focused; prefer small helpers for repeated logic. To add a new
+## command, add a `_register` entry above and place the `cmd_<name>()` function
+## in this section. If the command has subcommands, provide a `cmd_<name>_root`
+## dispatcher.
+## Quick navigation:
+##  - In the repo: grep -n "^cmd_\|^_help_" vibrae
+##  - From the running script: vibrae shell -> run: list_commands
 _register env           cmd_env_root        "Environment subcommands"           "Environment"       "<subcommand>"
 _register db-init       cmd_db_init         "Initialize database"               "Database"          ""
 _register autostart     cmd_autostart       "Toggle autostart"                  "Music Source"      "on|off"
@@ -1065,6 +957,120 @@ Notes:
   - Or run independently anytime: vibrae systemd sudoers
 HPI
 }
+
+########################################
+## Core command implementations (grouped)
+########################################
+
+# Real implementations moved here for easier navigation. Thin wrappers above call these.
+cmd_impl_install(){ run_script scripts/app/setup.sh; }
+
+cmd_impl_start(){
+  # Require install stamp and venv
+  if [ ! -f "$ROOT_DIR/.installed" ]; then err "setup has not been run. Run: scripts/app/setup.sh or 'vibrae install'"; return 1; fi
+  if [ ! -d "$ROOT_DIR/venv" ]; then err "missing venv. Run: scripts/app/setup.sh"; return 1; fi
+  run_script run.sh;
+}
+
+cmd_impl_stop(){ run_script stop.sh; }
+
+cmd_impl_restart(){
+  [ -f "$ROOT_DIR/.installed" ] || { err "setup has not been run. Run: scripts/app/setup.sh or 'vibrae install'"; return 1; };
+  [ -d "$ROOT_DIR/venv" ] || { err "missing venv. Run: scripts/app/setup.sh"; return 1; };
+  license_notice; cmd_impl_stop || true; cmd_impl_start;
+}
+
+
+########################################
+## Environment command implementations
+########################################
+
+cmd_impl_env_show(){ ensure_env; cat "$ENV_FILE"; }
+cmd_impl_env_edit(){ ensure_env; if [[ "$(uname)" == "Darwin" ]] && [ -z "${EDITOR-}${VISUAL-}" ]; then open -e "$ENV_FILE"; else ${EDITOR:-${VISUAL:-nano}} "$ENV_FILE"; fi }
+cmd_impl_env_set(){
+  local kv="$1"; if ! echo "$kv" | grep -q '='; then err "usage: vibrae env set KEY=VALUE"; return 1; fi
+  local key="${kv%%=*}"; local val="${kv#*=}"; kv_set "$key" "$val"; ok "$key set"
+}
+
+# Frontend env command counterparts (impls)
+cmd_impl_env_f_show(){ ensure_front_env; cat "$FRONT_ENV_FILE"; }
+cmd_impl_env_f_edit(){ ensure_front_env; if [[ "$(uname)" == "Darwin" ]] && [ -z "${EDITOR-}${VISUAL-}" ]; then open -e "$FRONT_ENV_FILE"; else ${EDITOR:-${VISUAL:-nano}} "$FRONT_ENV_FILE"; fi }
+cmd_impl_env_f_set(){ local kv="$1"; if ! echo "$kv" | grep -q '='; then err "usage: vibrae env f-set KEY=VALUE"; return 1; fi; local key="${kv%%=*}" val="${kv#*=}"; f_kv_set "$key" "$val"; ok "frontend $key set"; }
+cmd_impl_env_f_get(){ ensure_front_env; local k="$1"; [ -z "$k" ] && { err "usage: vibrae env f-get KEY"; return 1; }; f_kv_get "$k" || true; }
+cmd_impl_env_f_sync(){ ensure_front_env; local defaults; defaults=$(cat <<'DEFEOF_FE'
+EXPO_PUBLIC_API_BASE=/api
+DEFEOF_FE
+); local added=0; while IFS= read -r line; do [ -z "$line" ] && continue; local key="${line%%=*}" val="${line#*=}"; if ! grep -qE "^${key}=" "$FRONT_ENV_FILE" 2>/dev/null; then echo "${key}=${val}" >> "$FRONT_ENV_FILE"; added=$((added+1)); fi; done <<< "$defaults"; [ $added -gt 0 ] && ok "Frontend env: added $added missing keys" || ok "Frontend env already has recommended keys"; }
+
+cmd_impl_env_get(){ ensure_env; local k="$1"; [ -z "$k" ] && { err "usage: vibrae env get KEY"; return 1; }; kv_get "$k" || true; }
+
+# SOPS wrappers (impls)
+cmd_impl_env_encrypt(){ sops_check || return 1; local plain enc; plain="$(sec_plain)"; enc="$(sec_enc)"; [ -f "$plain" ] || { err "plaintext backend env $(basename "$plain") not found"; return 1; }; grep -qE '^[A-Z0-9_]+=.*' "$plain" || { err "refusing to encrypt empty env (no KEY= lines)"; return 1; }; _sops_run encrypt "$plain" "$enc" || return 1; ok "encrypted -> $(basename "$enc") (plaintext kept; DO NOT COMMIT)"; }
+cmd_impl_env_decrypt(){ sops_check || return 1; local plain enc; plain="$(sec_plain)"; enc="$(sec_enc)"; if [ ! -f "$enc" ]; then err "encrypted backend file missing: $(basename "$enc")"; return 1; fi; _sops_run decrypt "$enc" "$plain" || return 1; ok "decrypted to $(basename "$plain") (DO NOT COMMIT)"; }
+cmd_impl_env_edit_sec(){ sops_check || return 1; local enc plain; enc="$(sec_enc)"; plain="$(sec_plain)"; [ -f "$enc" ] || { err "missing encrypted backend file: $(basename "$enc")"; return 1; }; _sops_run decrypt "$enc" "$plain" || return 1; ${EDITOR:-${VISUAL:-nano}} "$plain"; _sops_run encrypt "$plain" "$enc" || return 1; ok "updated $(basename "$enc") (plaintext retained; DO NOT COMMIT)"; }
+cmd_impl_env_f_encrypt(){
+  sops_check || return 1
+  local plain enc; plain="$(sec_front_plain)"; enc="$(sec_front_enc)"
+  if [ ! -f "$plain" ]; then err "plaintext $(basename "$plain") not found"; return 1; fi
+  _sops_run encrypt "$plain" "$enc" || return 1
+  ok "encrypted -> $(basename "$enc") (plaintext kept; DO NOT COMMIT)"
+}
+cmd_impl_env_f_decrypt(){ sops_check || return 1; local plain enc; plain="$(sec_front_plain)"; enc="$(sec_front_enc)"; if [ ! -f "$enc" ]; then err "encrypted file missing: $(basename "$enc")"; return 1; fi; _sops_run decrypt "$enc" "$plain" || return 1; ok "decrypted to $(basename "$plain") (DO NOT COMMIT)"; }
+cmd_impl_env_f_edit_sec(){ sops_check || return 1; local enc plain; enc="$(sec_front_enc)"; plain="$(sec_front_plain)"; [ -f "$enc" ] || { err "missing encrypted file: $(basename "$enc")"; return 1; }; _sops_run decrypt "$enc" "$plain" || return 1; ${EDITOR:-${VISUAL:-nano}} "$plain"; _sops_run encrypt "$plain" "$enc" || return 1; ok "updated $(basename "$enc") (plaintext retained; DO NOT COMMIT)"; }
+
+########################################
+## Frontend command implementations
+########################################
+
+cmd_impl_front_restart(){
+  case "${1-}" in -h|--help|help) _help_front_restart; return 0;; esac
+  banner; section "Frontend restart"
+  pkill -f "(serve -s|npx serve)" >/dev/null 2>&1 || true
+  sleep 0.5
+  FRONTEND_DIST_VAL="$(kv_get FRONTEND_DIST)"; [ -n "$FRONTEND_DIST_VAL" ] || FRONTEND_DIST_VAL="/apps/web/dist"
+  SERVE_ROOT="$ROOT_DIR$FRONTEND_DIST_VAL"
+  PORT_VAL="$(kv_get FRONTEND_PORT)"; [ -n "$PORT_VAL" ] || PORT_VAL=9081
+  if command -v npx >/dev/null 2>&1 && [ -d "$SERVE_ROOT" ]; then
+    mkdir -p "$LOG_DIR" 2>/dev/null || true
+    echo "----- $(date) front restart on :$PORT_VAL -----" >> "$LOG_DIR/serve.log"
+    (cd "$ROOT_DIR" && FRONTEND_MODE=npx nohup npx serve -s "$SERVE_ROOT" -l "$PORT_VAL" >> "$LOG_DIR/serve.log" 2>&1 &)
+    ok "frontend restarted on :$PORT_VAL (mode=npx)"
+  else
+    warn "npx or export missing; backend will serve static files if available"
+  fi
+}
+
+cmd_impl_front_build(){
+  case "${1-}" in -h|--help|help) _help_front_build; return 0;; esac
+  banner; section "Frontend build"
+  local APP_DIR="$ROOT_DIR/apps/web"
+  if [ ! -d "$APP_DIR" ]; then err "apps/web not found"; return 1; fi
+  if ! command -v node >/dev/null 2>&1 || ! command -v npx >/dev/null 2>&1; then err "node/npm (npx) not found. Install Node.js."; return 1; fi
+  local do_restart=0
+  case "${1-}" in --restart|-r) do_restart=1;; esac
+  # Stop static server while rebuilding to avoid serving partial files
+  section "Stopping static server (if running)"
+  pkill -f "(serve -s|npx serve)" >/dev/null 2>&1 || true
+  sleep 0.5
+  # Install deps if node_modules missing
+  if [ ! -d "$APP_DIR/node_modules" ]; then
+    section "Installing frontend dependencies (npm ci)"
+    (cd "$APP_DIR" && npm ci) || { err "npm ci failed"; return 1; }
+  fi
+  section "Exporting static web build (expo export)"
+  (cd "$APP_DIR" && npx expo export --platform web) || { err "expo export failed"; return 1; }
+  # Verify build output exists
+  local FRONTEND_DIST_VAL; FRONTEND_DIST_VAL="$(kv_get FRONTEND_DIST)"; [ -n "$FRONTEND_DIST_VAL" ] || FRONTEND_DIST_VAL="/apps/web/dist"
+  local SERVE_ROOT="$ROOT_DIR$FRONTEND_DIST_VAL"
+  if [ -d "$SERVE_ROOT" ]; then ok "build ready at $FRONTEND_DIST_VAL"; else warn "build output not found at $FRONTEND_DIST_VAL"; fi
+  if [ $do_restart -eq 1 ]; then
+    cmd_impl_front_restart
+  else
+    echo "Tip: run 'vibrae front restart' to serve the new build."
+  fi
+}
+
+
 
 ########################################
 ## 07b MAC HELPERS

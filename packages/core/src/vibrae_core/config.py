@@ -1,5 +1,4 @@
 """Configuration utilities (extracted from legacy backend.config)."""
-from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, List
 import os, sys

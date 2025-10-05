@@ -1,5 +1,4 @@
 """Authentication helpers."""
-from __future__ import annotations
 
 # Standard library
 import logging

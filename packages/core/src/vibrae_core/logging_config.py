@@ -1,24 +1,24 @@
 """Central logging configuration helper."""
-from __future__ import annotations
 import logging
 import logging.config
 import os
 from pathlib import Path
 import re
+from typing import Optional, Union
 
 DEFAULT_CONFIG_PATHS = [
     Path("config/logging.ini"),
 ]
 
 
-def configure_logging(level: str | None = None, config_file: str | os.PathLike[str] | None = None) -> None:
+def configure_logging(level: Optional[str] = None, config_file: Optional[Union[str, os.PathLike]] = None) -> None:
     """Configure logging using an INI template.
 
     If the config contains the placeholder __LOG_LEVEL__, it is replaced with
     the effective log level before passing to logging.config.fileConfig.
     """
     lvl = (level or os.environ.get("LOG_LEVEL", "INFO")).upper()
-    cfg_path: Path | None
+    cfg_path: Optional[Path]
     if config_file:
         cfg_path = Path(config_file)
     else:

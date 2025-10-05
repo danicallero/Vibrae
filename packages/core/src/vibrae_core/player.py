@@ -4,7 +4,6 @@ Migrated from legacy `backend.player` with minimal changes. External side-effect
 notification (previously via backend.routes.control.notify_from_player) is
 decoupled through a callback registry so API layer can register listeners.
 """
-from __future__ import annotations
 
 import os
 import random

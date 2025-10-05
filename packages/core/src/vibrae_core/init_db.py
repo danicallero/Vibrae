@@ -3,7 +3,6 @@
 Creates all tables and optional seed data (admin user, default scenes).
 Intended replacement for legacy backend.init_db module.
 """
-from __future__ import annotations
 import os
 from sqlalchemy.orm import Session
 from .db import Base, engine

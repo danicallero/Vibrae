@@ -6,8 +6,6 @@ Defaults to an on-disk SQLite database under ``data/garden.db`` at the
 repository root, but respects an explicit environment override via
 ``VIBRAE_DB_URL`` (or ``VIBRAE_DATABASE_URL``) for testing or custom setups.
 """
-from __future__ import annotations
-
 import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base

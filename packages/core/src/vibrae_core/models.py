@@ -1,6 +1,4 @@
 """ORM models (migrated from legacy `backend.models`)."""
-from __future__ import annotations
-
 from sqlalchemy import Column, Integer, String, ForeignKey
 from vibrae_core.db import Base
 

@@ -2,7 +2,6 @@
 
 Polls DB for matching routine and orchestrates player scene playback.
 """
-from __future__ import annotations
 
 import threading
 import time

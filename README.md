@@ -601,9 +601,9 @@ Click any thumbnail to view the full-size image.
 
 |  |  |  |
 |:--:|:--:|:--:|
-| <a href="assets/login.png"><img src="assets/login.png" alt="Login" width="260"/></a><br/><sub>Login</sub> | <a href="assets/home.png"><img src="assets/home.png" alt="Home" width="260"/></a><br/><sub>Home</sub> | <a href="assets/routine_list_view.png"><img src="assets/routine_list_view.png" alt="Routine List View" width="260"/></a><br/><sub>Routine List View</sub> |
-| <a href="assets/routine_week_view.png"><img src="assets/routine_week_view.png" alt="Routine Week View" width="260"/></a><br/><sub>Routine Week View</sub> | <a href="assets/routine_creation.png"><img src="assets/routine_creation.png" alt="Routine Creation" width="260"/></a><br/><sub>Routine Creation</sub> | <a href="assets/routine_edit.png"><img src="assets/routine_edit.png" alt="Routine Edit" width="260"/></a><br/><sub>Routine Edit</sub> |
-| &nbsp; | <a href="assets/scene_creation.png"><img src="assets/scene_creation.png" alt="Scene Creation" width="260"/></a><br/><sub>Scene Creation</sub> | &nbsp; |
+| <a href="docs/screenshots/login.png"><img src="docs/screenshots/login.png" alt="Login" width="260"/></a><br/><sub>Login</sub> | <a href="docs/screenshots/home.png"><img src="docs/screenshots/home.png" alt="Home" width="260"/></a><br/><sub>Home</sub> | <a href="docs/screenshots/routine_list_view.png"><img src="docs/screenshots/routine_list_view.png" alt="Routine List View" width="260"/></a><br/><sub>Routine List View</sub> |
+| <a href="docs/screenshots/routine_week_view.png"><img src="docs/screenshots/routine_week_view.png" alt="Routine Week View" width="260"/></a><br/><sub>Routine Week View</sub> | <a href="docs/screenshots/routine_creation.png"><img src="docs/screenshots/routine_creation.png" alt="Routine Creation" width="260"/></a><br/><sub>Routine Creation</sub> | <a href="docs/screenshots/routine_edit.png"><img src="docs/screenshots/routine_edit.png" alt="Routine Edit" width="260"/></a><br/><sub>Routine Edit</sub> |
+| &nbsp; | <a href="docs/screenshots/scene_creation.png"><img src="docs/screenshots/scene_creation.png" alt="Scene Creation" width="260"/></a><br/><sub>Scene Creation</sub> | &nbsp; |
 
 ---
 

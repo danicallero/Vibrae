@@ -1,1323 +1,300 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Vibrae CLI: install, run, inspect.
-# Usage: vibrae <command> [args]
+# Vibrae CLI - Music Automation System
 
-# Structure (search for the SECTION headers):
-#   00 Prelude & Globals
-#   01 Path Resolution & Environment Files
-#   02 Colors & Output Helpers
-#   03 Generic Utilities (kv store, truthy, etc.)
-## 01 PATH RESOLUTION & ENV FILES (minimal runtime)
-resolve_self(){
-  local src="${BASH_SOURCE[0]}"
-  while [ -h "$src" ]; do
-    local dir; dir="$(cd -P "$(dirname "$src")" && pwd)"
-    src="$(readlink "$src")"
-    [[ "$src" != /* ]] && src="$dir/$src"
-  done
-  printf '%s' "$src"
-}
-SCRIPT_PATH="$(resolve_self)"
-ROOT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+set -euo pipefail
+
+# Paths
+SCRIPT_PATH="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+export ROOT_DIR="$(dirname "$SCRIPT_PATH")"
+VENV="$ROOT_DIR/.venv"
 ENV_FILE="$ROOT_DIR/config/env/.env.backend"
-ENV_EXAMPLE="$ROOT_DIR/config/env/.env.backend.example"
-: "${LOG_DIR:=$ROOT_DIR/logs}"
+ENV_EXAMPLE="$ROOT_DIR/config/env/.env.example"
 
-# Source extracted helpers (colors, generic utilities, sops)
-if [ -f "$ROOT_DIR/lib/vibrae_helpers.sh" ]; then
-  # shellcheck disable=SC1090
-  source "$ROOT_DIR/lib/vibrae_helpers.sh"
-else
-  echo "helper library missing: $ROOT_DIR/lib/vibrae_helpers.sh" 1>&2
-  exit 1
-fi
+# Source helpers
+. "$ROOT_DIR/lib/cli-helpers.sh"
+. "$ROOT_DIR/lib/env-manager.sh"
 
-BANNER_WIDTH=50
-#banner(){ printf "=== %bVibrae%b — Sound, simplified===\n" "$BOLD" "$RESET"; }
-banner(){
-  # UTF-8 detection: be safe even under `set -u` and allow opt-out via VIBRAE_FORCE_ASCII=1
-  local title=" Vibrae — Sound, simplified "
-  local utf8=0
-  # If user forces ASCII, keep ascii; else detect via locale envs or `locale`
-  if [ "${VIBRAE_FORCE_ASCII-0}" = "1" ]; then
-    utf8=0
+# Commands
+cmd_install() {
+  header "Installing Vibrae"
+  ensure_venv "$VENV" || return 1
+  cd "$ROOT_DIR"
+  info "Installing dependencies..."
+  "$VENV/bin/pip" install -e .[dev] || { err "Installation failed"; return 1; }
+  ok "Dependencies installed"
+}
+
+cmd_start() {
+  header "Starting Vibrae Services"
+  ensure_env_file "$ENV_FILE" "$ENV_EXAMPLE"
+  local result=$?
+  [ $result -eq 2 ] && { warn "Edit config first: vibrae env edit"; return 1; }
+  [ $result -eq 1 ] && return 1
+  cd "$ROOT_DIR"
+  [ -f "scripts/app/run.sh" ] || { err "Start script not found"; return 1; }
+  bash "scripts/app/run.sh"
+}
+
+cmd_stop() {
+  header "Stopping Vibrae Services"
+  cd "$ROOT_DIR"
+  [ -f "scripts/app/stop.sh" ] || { err "Stop script not found"; return 1; }
+  bash "scripts/app/stop.sh"
+}
+
+cmd_restart() { cmd_stop; sleep 2; cmd_start; }
+
+cmd_status() {
+  header "Service Status"
+  local all_stopped=true
+  if is_running "uvicorn.*vibrae"; then
+    ok "Backend:  Running (PID: $(get_pid 'uvicorn.*vibrae'))"
+    all_stopped=false
   else
-    if (locale 2>/dev/null | grep -qi 'UTF-8') || \
-       (printf '%s' "${LC_ALL-}${LC_CTYPE-}${LANG-}" | grep -qi 'UTF-8'); then
-      utf8=1
-    fi
+    warn "Backend:  Stopped"
   fi
-  local tl tr bl br hl vl
-  if [ "$utf8" -eq 1 ]; then
-    hl='═'; vl='║'; tl='╔'; tr='╗'; bl='╚'; br='╝'
+  if is_running "npx serve" || is_running "nginx.*vibrae"; then
+    ok "Frontend: Running"
+    all_stopped=false
   else
-    hl='='; vl='|'; tl='+'; tr='+'; bl='+'; br='+'
+    warn "Frontend: Stopped"
   fi
-  local border; border="$(printf '%s' "$(printf '%*s' "$BANNER_WIDTH" '')" | tr ' ' "$hl")"
-  printf "%b%s%s%s%b\n" "$STYLE_BANNER" "$tl" "$border" "$tr" "$RESET"
-  local pad=$(( (BANNER_WIDTH - ${#title}) / 2 ))
-  local pad2=$(( BANNER_WIDTH - pad - ${#title} ))
-  printf "%b%s%*s%s%*s%s%b\n" "$STYLE_BANNER" "$vl" "$pad" "" "$title" "$pad2" "" "$vl" "$RESET"
-  printf "%b%s%s%s%b\n" "$STYLE_BANNER" "$bl" "$border" "$br" "$RESET"
-}
-HELP_BANNER_SHOWN=""
-help_banner(){ if [ -z "$HELP_BANNER_SHOWN" ]; then banner; HELP_BANNER_SHOWN=1; fi }
-
-license_notice(){ printf "%bVibrae%b (GPLv3, no warranty)\n" "$BOLD" "$RESET"; }
-contact_information(){ printf "%bContact%b\n" "$BOLD" "$RESET"; printf "Issues: GitHub repo (./vibrae github). Email: vibrae@danicallero.es\n"; }
-
-usage(){
-  banner
-  echo "Note: Commands are cross-platform (macOS/Linux, incl. Pi) unless listed under 'Systemd (Linux)' or 'macOS' helpers."
-  echo
-  _print_section "Core"
-  _print_section "Environment"
-  _print_section "Database"
-  _print_section "Music Source"
-  _print_section "Diagnostics"
-  _print_section "Frontend"
-  _print_section "Web & URLs"
-  _print_section "Systemd (Linux)"
-  _print_section "macOS"
-  _print_section "Misc"
-  section "Aliases"; _print_aliases
-  line; echo
-}
-
-onboarding_message(){
-  echo; warn "Vibrae is not installed yet (missing .installed or venv)"; cat <<'EOM'
-Next steps (non-interactive):
-  1) vibrae install           # install dependencies
-  2) vibrae env edit          # or: vibrae env sync
-  3) vibrae db init           # create DB tables & seed admin
-  4) vibrae start             # run backend, static serve, tunnel
-
-Tip (interactive):
-  - Run: vibrae wizard
-    Guided install: install deps, set up env, init DB, and start services
-  - Or: vibrae shell
-    Then type, one by one: install, doctor, db init, env decrypt (if prompted), env f-decrypt (if prompted), start
-
-Encrypted env note:
-  - If you see: "found encrypted backend env ... decrypt with: vibrae env decrypt"
-    Run: vibrae env decrypt   # backend env
-         vibrae env f-decrypt # frontend env (optional)
-
-Shortcut:
-  vibrae install && vibrae db init && vibrae start
-EOM
-}
-
-########################################
-## 03 GENERIC UTILITIES
-########################################
-ensure_env(){
-  # Warn about legacy root .env (not auto-migrated)
-  if [ -f "$ROOT_DIR/.env" ]; then warn "root .env is ignored; run 'vibrae env migrate' if needed"; fi
-  # If only encrypted env exists, inform user
-  if [ ! -f "$ENV_FILE" ] && [ -f "${ENV_FILE}.enc" ]; then
-    warn "found encrypted backend env ($(basename "${ENV_FILE}.enc")) but no plaintext; decrypt with: vibrae env decrypt"; return 0; fi
-  if [ ! -f "$ENV_FILE" ]; then
-    mkdir -p "$(dirname "$ENV_FILE")" 2>/dev/null || true
-    if [ -f "$ENV_EXAMPLE" ]; then cp "$ENV_EXAMPLE" "$ENV_FILE"; ok "created $(basename "$ENV_FILE") from example"; else cat > "$ENV_FILE" <<'EOENV'
-# Vibrae environment
-BACKEND_PORT=8000
-BACKEND_MODULE=apps.api.src.vibrae_api.main:app
-FRONTEND_PORT=9081
-FRONTEND_DIST=/apps/web/dist
-MUSIC_MODE=folder
-MUSIC_DIR=music
-SECRET_KEY=change-me-please
-LOG_LEVEL=INFO
-EOENV
-      ok "initialized $(basename "$ENV_FILE") with defaults"
-    fi
-  fi
-  if ! grep -qE '^[A-Z0-9_]+=.*' "$ENV_FILE"; then warn "env file has no KEY= entries; add variables or run 'vibrae env sync'"; fi
-}
-
-run_script(){
-  local script="$1" candidate
-  if [ -f "$ROOT_DIR/$script" ]; then candidate="$ROOT_DIR/$script"; elif [ -f "$ROOT_DIR/scripts/app/$script" ]; then candidate="$ROOT_DIR/scripts/app/$script"; else err "script not found: $script (looked in . and scripts/app)"; return 1; fi
-  [ -x "$candidate" ] || chmod +x "$candidate" 2>/dev/null || true
-  (cd "$ROOT_DIR" && bash "$candidate")
-}
-
-# Colorize common bracketed tags from external script output
-colorize_stream(){
-  # Only colorize when stdout is a TTY; otherwise pass through
-  if [ -t 1 ]; then
-  awk -v G="$GREEN" -v Y="$YELLOW" -v C="$CYAN" -v R="$RED" -v RST="$RESET" '
-      { line=$0;
-    gsub(/\[ok\]/,    G "[ok]" RST, line);
-    gsub(/\[warn\]/,  Y "[warn]" RST, line);
-    gsub(/\[info\]/,  C "[info]" RST, line);
-    gsub(/\[error\]/, R "[error]" RST, line);
-        print line;
-      }'
+  if is_running "cloudflared"; then
+    ok "Tunnel:   Running"
+    all_stopped=false
   else
-    cat
+    info "Tunnel:   Not configured"
   fi
-}
-kv_set(){ local key="$1" val="$2" tmp; ensure_env; tmp="$(mktemp 2>/dev/null || true)"; [ -n "$tmp" ] || tmp="${ENV_FILE}.tmp.$$"; awk -v K="$key" -v V="$val" 'BEGIN{ set=0 } /^[#[:space:]]/ { print; next } $0 ~ "^"K"=" { if(!set){ print K"="V; set=1 } ; next } { print } END{ if(!set) print K"="V }' "$ENV_FILE" > "$tmp" && mv "$tmp" "$ENV_FILE"; }
-kv_get(){ local key="$1"; [ -f "$ENV_FILE" ] || return 1; grep -E "^${key}=" "$ENV_FILE" | head -n1 | sed -E "s/^${key}=//"; }
-
-# Frontend env utilities
-FRONT_ENV_FILE="$ROOT_DIR/config/env/.env.frontend"
-FRONT_ENV_EXAMPLE="$ROOT_DIR/config/env/.env.frontend.example"
-ensure_front_env(){
-  mkdir -p "$(dirname "$FRONT_ENV_FILE")" 2>/dev/null || true
-  if [ ! -f "$FRONT_ENV_FILE" ]; then
-    if [ -f "$FRONT_ENV_EXAMPLE" ]; then cp "$FRONT_ENV_EXAMPLE" "$FRONT_ENV_FILE"; ok "created $(basename "$FRONT_ENV_FILE") from example"; else
-      cat > "$FRONT_ENV_FILE" <<'EOF_FE'
-# Vibrae frontend environment (EXPO_PUBLIC_* keys recommended)
-EXPO_PUBLIC_API_BASE=/api
-EOF_FE
-      ok "initialized $(basename "$FRONT_ENV_FILE") with defaults"
-    fi
-  fi
-}
-f_kv_set(){ local key="$1" val="$2" tmp; ensure_front_env; tmp="$(mktemp 2>/dev/null || true)"; [ -n "$tmp" ] || tmp="${FRONT_ENV_FILE}.tmp.$$"; awk -v K="$key" -v V="$val" 'BEGIN{ set=0 } /^[#[:space:]]/ { print; next } $0 ~ "^"K"=" { if(!set){ print K"="V; set=1 } ; next } { print } END{ if(!set) print K"="V }' "$FRONT_ENV_FILE" > "$tmp" && mv "$tmp" "$FRONT_ENV_FILE"; }
-f_kv_get(){ local key="$1"; [ -f "$FRONT_ENV_FILE" ] || return 1; grep -E "^${key}=" "$FRONT_ENV_FILE" | head -n1 | sed -E "s/^${key}=//"; }
-
-# helpers
-truthy(){ case "$(echo "$1" | tr '[:upper:]' '[:lower:]')" in true|1|yes|on) return 0;; *) return 1;; esac }
-is_uvicorn_running(){ pgrep -f "uvicorn" >/dev/null 2>&1 || return 1; }
-
-autostart_maybe_start(){ ensure_env; local as; as="$(kv_get AUTOSTART)"; if truthy "$as"; then if is_uvicorn_running; then ok "AUTOSTART on; already running"; else if [ ! -f "$ROOT_DIR/.installed" ] || [ ! -d "$ROOT_DIR/venv" ]; then warn "AUTOSTART on but setup not completed; run scripts/app/setup.sh first"; else warn "AUTOSTART on; starting services"; cmd_start; fi; fi; return 0; fi; return 1; }
-
-# Simple interactive yes/no prompt (default yes).
-# Returns: 0=yes, 1=no/skip, 130=abort (exit/quit/q)
-ask_yes_no(){
-  local prompt="$1"; shift || true
-  local def="${1:-Y}"
-  local ans
-  if [ ! -t 0 ]; then return 1; fi
-  while true; do
-    if [ "$def" = "Y" ]; then
-      read -r -p "$prompt [Y/n]: " ans || return 1
-      ans="${ans:-Y}"
-    else
-      read -r -p "$prompt [y/N]: " ans || return 1
-      ans="${ans:-N}"
-    fi
-    case "$(echo "$ans" | tr '[:upper:]' '[:lower:]')" in
-  y|yes) return 0 ;;
-  n|no)  return 1 ;;
-  q|quit|exit) return 130 ;;
-    esac
-  done
+  echo ""
+  [ "$all_stopped" = true ] && warn "All stopped. Run: vibrae start" || ok "Running"
 }
 
-# Interactive install wizard
-run_wizard(){
-  banner
-  section "Welcome"
-  echo "This wizard will help you install Vibrae, set up the environment, initialize the database, and start services."
-  echo "Tip: type 'exit' at any prompt to quit."
-  echo
-  # Guard: if already installed, offer to run doctor/start
-  if [ -f "$ROOT_DIR/.installed" ] && [ -d "$ROOT_DIR/venv" ]; then
-    ok "Installation already detected."
-    if ask_yes_no "Run diagnostics (doctor) now?" Y; then cmd_doctor; echo; fi
-    if ask_yes_no "Start services now?" Y; then cmd_start; fi
-    return 0
-  fi
-
-  # Step 1: install
-  section "Step 1 · Install dependencies"
-  if ask_yes_no "Run installer now (scripts/app/setup.sh)?" Y; then
-    cmd_install || { err "install failed"; return 1; }
-  else
-    rc=$?
-    if [ "$rc" -eq 130 ]; then warn "Aborted by user"; return 0; fi
-    warn "Skipping install; some next steps may fail."
-  fi
-
-  # Step 2: environment
-  section "Step 2 · Environment"
-  ensure_env || true
-  # If encrypted env exists newer than plaintext, suggest decrypt
-  if [ -f "${ENV_FILE}.enc" ]; then
-    if [ ! -f "$ENV_FILE" ] || [ "${ENV_FILE}.enc" -nt "$ENV_FILE" ]; then
-      warn "Encrypted backend env found; plaintext missing or outdated."
-      if command -v sops >/dev/null 2>&1 && ask_yes_no "Decrypt backend env now?" Y; then
-        cmd_env_decrypt || warn "decrypt failed; you can run 'vibrae env decrypt' later"
-      else
-        rc=$?
-        if [ "$rc" -eq 130 ]; then warn "Aborted by user"; return 0; fi
-        warn "Skipping decrypt; run: vibrae env decrypt"
-      fi
-    fi
-  fi
-  if ask_yes_no "Open env editor to review settings?" N; then
-    cmd_env_edit
-  else
-    rc=$?
-    if [ "$rc" -eq 130 ]; then warn "Aborted by user"; return 0; fi
-    cmd_env_sync || true
-  fi
-
-  # Step 3: doctor
-  section "Step 3 · Diagnostics"
-  cmd_doctor || true
-
-  # Step 4: database init
-  section "Step 4 · Database"
-  if ask_yes_no "Initialize database now?" Y; then
-    cmd_db_init || warn "db init failed; you can retry later with 'vibrae db init'"
-  else
-    rc=$?
-    if [ "$rc" -eq 130 ]; then warn "Aborted by user"; return 0; fi
-  fi
-
-  # Step 5: start
-  section "Step 5 · Start"
-  if ask_yes_no "Start services now?" Y; then
-    cmd_start || { err "start failed"; return 1; }
-  else
-    rc=$?
-    if [ "$rc" -eq 130 ]; then warn "Aborted by user"; return 0; fi
-    echo "You can start later with: vibrae start"
-  fi
-
-  echo
-  ok "Wizard completed."
-  echo "Tips:"
-  echo "  - Run 'vibrae status' to check services"
-  echo "  - Run 'vibrae logs' to tail logs"
+cmd_logs() {
+  local logname="${1:-backend}"
+  local logfile="$ROOT_DIR/logs/${logname}.log"
+  [ ! -f "$logfile" ] && { err "Log not found: $logfile"; ls "$ROOT_DIR/logs"/*.log 2>/dev/null | xargs -n1 basename; return 1; }
+  info "Tailing $logname.log..."
+  tail -f "$logfile"
 }
 
-########################################
-## 04 ENVIRONMENT MANAGEMENT COMMANDS
-########################################
-
-cmd_install(){ cmd_impl_install "$@"; }
-cmd_start(){ cmd_impl_start "$@"; }
-cmd_stop(){ cmd_impl_stop "$@"; }
-cmd_restart(){ cmd_impl_restart "$@"; }
-
-service_row(){ local name="$1" patt="$2" psout="$3"; if echo "$psout" | grep -E "$patt" | grep -v grep >/dev/null; then printf "  %b●%b %-12s %brunning%b\n" "$GREEN" "$RESET" "$name" "$GREEN" "$RESET"; else printf "  %b○%b %-12s %bstopped%b\n" "$GREY" "$RESET" "$name" "$GREY" "$RESET"; fi }
-cmd_status(){
-  banner
-  local psout; psout="$(/bin/ps aux || ps -ef || true)"
-  section "Services"
-  service_row "uvicorn" "uvicorn" "$psout"
-  service_row "static-serve" "(serve -s|npx serve)" "$psout"
-  service_row "cloudflared" "cloudflared" "$psout"
-
-  # Frontend mode detection (process-level)
-  local mode="backend"
-    if echo "$psout" | grep -E "(serve -s|npx serve)" >/dev/null; then mode="npx"; fi
-  
-    printf "\nFrontend: %s\n" "$mode"
-  
-    # Health via backend
-    local api_url="http://127.0.0.1/api/health"
-    local json; json="$(curl -s --max-time 1 "$api_url" 2>/dev/null || echo '')"
-    if [ -n "$json" ]; then
-      local backend fe fe_mode player proxy cf fe_srv
-      backend=$(echo "$json" | sed -n 's/.*"backend"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-      fe=$(echo "$json" | sed -n 's/.*"frontend"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-      fe_mode=$(echo "$json" | sed -n 's/.*"frontend_mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-      player=$(echo "$json" | sed -n 's/.*"player"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-      proxy=$(echo "$json" | sed -n 's/.*"proxy"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-      cf=$(echo "$json" | sed -n 's/.*"cloudflared"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-      fe_srv=$(echo "$json" | sed -n 's/.*"frontend_server"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
-  
-      # If backend reports frontend as unknown, try to derive from local process view
-      if [ -z "$fe" ] || [ "$fe" = "unknown" ]; then
-        if [ "$mode" = "npx" ]; then fe="served"; fe_mode="npx";
-        elif echo "$psout" | grep -E "nginx" >/dev/null; then fe="nginx"; fe_mode="nginx";
-        else fe="backend"; fi
-      fi
-  
-      section "Health"
-      # Backend
-      if [ "$backend" = "ok" ]; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Backend" "running"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Backend" "stopped"; fi
-      # Player
-      if [ "$player" = "running" ]; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Player" "running"; else printf "  %b◐%b %-12s %s\n" "$YELLOW" "$RESET" "Player" "idle"; fi
-      # Frontend
-      local fe_label
-      if [ -n "${fe:-}" ] && [ "${fe}" != "unknown" ]; then
-        fe_label="good"
-        printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Frontend" "${fe_label} (mode=${fe_mode:-$mode})"
-      else
-        fe_label="unknown"
-        printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Frontend" "${fe_label}"
-      fi
-      # Proxy
-      printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Proxy" "${proxy:-unknown}"
-      # Tunnel
-      printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Tunnel" "${cf:-unknown}"
-    else
-      # API unreachable -> present a helpful fallback Health view based on processes
-      section "Health"
-      # Backend: check uvicorn process
-      if echo "$psout" | grep -E "uvicorn" | grep -v grep >/dev/null; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Backend" "running"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Backend" "stopped"; fi
-      # Player: best-effort unknown/idle
-      printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Player" "unknown (API unreachable)"
-      # Frontend: derive from process-level mode detection and mark as good when likely healthy
-      if [ "$mode" = "npx" ]; then
-        printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Frontend" "good (mode=npx)"
-      elif echo "$psout" | grep -E "nginx" >/dev/null; then
-        printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Frontend" "good (mode=nginx)"
-      elif echo "$psout" | grep -E "uvicorn" | grep -v grep >/dev/null; then
-        printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Frontend" "good (mode=backend)"
-      else
-        printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Frontend" "unknown"
-      fi
-      # Proxy
-      if echo "$psout" | grep -E "nginx" >/dev/null; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Proxy" "nginx"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Proxy" "none"; fi
-      # Tunnel
-      if echo "$psout" | grep -E "cloudflared" >/dev/null; then printf "  %b●%b %-12s %s\n" "$GREEN" "$RESET" "Tunnel" "enabled"; else printf "  %b○%b %-12s %s\n" "$GREY" "$RESET" "Tunnel" "disabled"; fi
-      printf "\nAPI (/api/health): unreachable\n"
-    fi
+cmd_test() {
+  header "Running Tests"
+  ensure_venv "$VENV" || return 1
+  cd "$ROOT_DIR"
+  "$VENV/bin/pytest" -q || { err "Tests failed"; return 1; }
+  ok "All tests passed"
 }
 
-cmd_logs(){
-  mkdir -p "$LOG_DIR" 2>/dev/null || true
-  local name="$1"; shift || true
-  local lines="${1:-100}"
+cmd_config() { env_edit; }
+cmd_version() { echo "vibrae 0.1.0"; }
 
-  if [ -z "$name" ]; then
-    for f in backend player serve cloudflared; do
-      section "$f.log"
-      tail -n "$lines" "$LOG_DIR/$f.log" 2>/dev/null | colorize_stream || warn "no $f.log"
-      echo
-    done
-  else
-    section "$name.log"
-    tail -n "$lines" "$LOG_DIR/$name.log" 2>/dev/null | colorize_stream || err "no such log: $name"
-  fi
-}
-
-cmd_front_restart(){ cmd_impl_front_restart "$@"; }
-
-cmd_front_build(){ cmd_impl_front_build "$@"; }
-
-cmd_github(){
-  local url="https://github.com/danicallero/Vibrae"
-  if [[ "$(uname)" == "Darwin" ]]; then open "$url"; echo "Repo: $url"; else xdg-open "$url" 2>/dev/null; echo "Repo: $url" || echo "$url"; fi
-}
-
-_resolve_urls(){
-  local port domain
-  port="$(kv_get FRONTEND_PORT)"; [ -n "$port" ] || port=9081
-  domain="$(kv_get DOMAIN)"
-  if [ -n "$domain" ]; then
-    printf 'PUBLIC_URL=https://%s\n' "$domain"
-  fi
-  printf 'LOCAL_STATIC=http://127.0.0.1:%s\n' "$port"
-  # If nginx listens on 80 we consider it the canonical local entry; else fallback to static
-  printf 'LOCAL_CANONICAL=http://127.0.0.1:%s\n' "${NGINX_PORT:-80}"
-}
-cmd_open(){
-  local kvs url
-  kvs="$(_resolve_urls)"
-  url="$(printf '%s' "$kvs" | awk -F= '/PUBLIC_URL=/{print $2;exit}')"
-  if [ -z "$url" ]; then
-    url="$(printf '%s' "$kvs" | awk -F= '/LOCAL_STATIC=/{print $2;exit}')"
-  fi
-  if [[ "$(uname)" == "Darwin" ]]; then
-    open "$url"
-  else
-    xdg-open "$url" 2>/dev/null || echo "$url"
-  fi
-}
-cmd_url(){
-  local kvs
-  kvs="$(_resolve_urls)"
-  echo "$kvs" | sed 's/^/  /'
-}
-
-cmd_env_show(){ cmd_impl_env_show "$@"; }
-cmd_env_edit(){ cmd_impl_env_edit "$@"; }
-cmd_env_set(){ cmd_impl_env_set "$@"; }
-
-# Frontend env command counterparts
-cmd_env_f_show(){ cmd_impl_env_f_show "$@"; }
-cmd_env_f_edit(){ cmd_impl_env_f_edit "$@"; }
-cmd_env_f_set(){ cmd_impl_env_f_set "$@"; }
-cmd_env_f_get(){ cmd_impl_env_f_get "$@"; }
-cmd_env_f_sync(){ cmd_impl_env_f_sync "$@"; }
-
-env_help(){ _help_env; }
-
-env_get(){ cmd_impl_env_get "$@"; }
-
-# --- SOPS environment encryption helpers ---
-sops_check(){ if ! command -v sops >/dev/null 2>&1; then err "sops not installed (https://github.com/getsops/sops)"; return 1; fi }
-sec_dir(){ printf '%s' "$ROOT_DIR/config/env"; }
-sec_plain(){ printf '%s' "$(sec_dir)/.env.backend"; }
-sec_enc(){ printf '%s' "$(sec_dir)/.env.backend.enc"; }
-sec_front_plain(){ printf '%s' "$(sec_dir)/.env.frontend"; }
-sec_front_enc(){ printf '%s' "$(sec_dir)/.env.frontend.enc"; }
-
-########################################
-## 05 ENCRYPTION (SOPS)
-########################################
-_sops_run(){ # _sops_run <encrypt|decrypt> <input> <output>
-  local mode="$1"; shift; local in="$1"; shift; local out="$1"; shift || true
-  local cmd=(sops)
-  # Prefer repo config to avoid broken global ~/.sops.yaml issues
-  if [ -f "$ROOT_DIR/.sops.yaml" ]; then
-    if [ -z "${SOPS_CONFIG:-}" ]; then cmd+=(--config "$ROOT_DIR/.sops.yaml"); fi
-  fi
-  # Temporarily suppress generic trap noise
-  local prev_suppress="${_VIBRAE_SUPPRESS_TRAP:-}"
-  _VIBRAE_SUPPRESS_TRAP=1
-  case "$mode" in
-    encrypt) "${cmd[@]}" --encrypt "$in" > "$out" 2>"$out.err" ;;
-    decrypt) "${cmd[@]}" --decrypt "$in" > "$out" 2>"$out.err" ;;
-    *) err "_sops_run: invalid mode '$mode'"; return 1;;
-  esac
-  local rc=$?
-  if [ $rc -ne 0 ]; then
-    if grep -qi 'unmarshal' "$out.err" 2>/dev/null; then
-      err "sops parse error (YAML). Likely a broken global ~/.sops.yaml. Try: mv ~/.sops.yaml ~/.sops.yaml.bak && retry, or export SOPS_CONFIG=./.sops.yaml"
-    else
-      err "sops $mode failed: $(sed -e 's/\r//g' "$out.err" | tail -n3 | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g')"
-    fi
-    rm -f "$out.err" 2>/dev/null || true
-    # Keep suppression active for this failing path
-    return 1
-  fi
-  # Success path: restore suppression state
-  if [ -n "$prev_suppress" ]; then _VIBRAE_SUPPRESS_TRAP="$prev_suppress"; else unset _VIBRAE_SUPPRESS_TRAP; fi
-  rm -f "$out.err" 2>/dev/null || true
-  return 0
-}
-
-cmd_env_encrypt(){ sops_check || return 1; local plain enc; plain="$(sec_plain)"; enc="$(sec_enc)"; [ -f "$plain" ] || { err "plaintext backend env $(basename "$plain") not found"; return 1; }; grep -qE '^[A-Z0-9_]+=.*' "$plain" || { err "refusing to encrypt empty env (no KEY= lines)"; return 1; }; _sops_run encrypt "$plain" "$enc" || return 1; ok "encrypted -> $(basename "$enc") (plaintext kept; DO NOT COMMIT)"; }
-cmd_env_decrypt(){ sops_check || return 1; local plain enc; plain="$(sec_plain)"; enc="$(sec_enc)"; if [ ! -f "$enc" ]; then err "encrypted backend file missing: $(basename "$enc")"; return 1; fi; _sops_run decrypt "$enc" "$plain" || return 1; ok "decrypted to $(basename "$plain") (DO NOT COMMIT)"; }
-cmd_env_edit_sec(){ sops_check || return 1; local enc plain; enc="$(sec_enc)"; plain="$(sec_plain)"; [ -f "$enc" ] || { err "missing encrypted backend file: $(basename "$enc")"; return 1; }; _sops_run decrypt "$enc" "$plain" || return 1; ${EDITOR:-${VISUAL:-nano}} "$plain"; _sops_run encrypt "$plain" "$enc" || return 1; ok "updated $(basename "$enc") (plaintext retained; DO NOT COMMIT)"; }
-cmd_env_f_encrypt(){
-  sops_check || return 1
-  local plain enc; plain="$(sec_front_plain)"; enc="$(sec_front_enc)"
-  if [ ! -f "$plain" ]; then err "plaintext $(basename "$plain") not found"; return 1; fi
-  _sops_run encrypt "$plain" "$enc" || return 1
-  # Keep plaintext for active development; remind user not to commit.
-  ok "encrypted -> $(basename "$enc") (plaintext kept; DO NOT COMMIT)"
-}
-cmd_env_f_decrypt(){ sops_check || return 1; local plain enc; plain="$(sec_front_plain)"; enc="$(sec_front_enc)"; if [ ! -f "$enc" ]; then err "encrypted file missing: $(basename "$enc")"; return 1; fi; _sops_run decrypt "$enc" "$plain" || return 1; ok "decrypted to $(basename "$plain") (DO NOT COMMIT)"; }
-cmd_env_f_edit_sec(){ sops_check || return 1; local enc plain; enc="$(sec_front_enc)"; plain="$(sec_front_plain)"; [ -f "$enc" ] || { err "missing encrypted file: $(basename "$enc")"; return 1; }; _sops_run decrypt "$enc" "$plain" || return 1; ${EDITOR:-${VISUAL:-nano}} "$plain"; _sops_run encrypt "$plain" "$enc" || return 1; ok "updated $(basename "$enc") (plaintext retained; DO NOT COMMIT)"; }
-
-cmd_db_init(){ [ -f "$ROOT_DIR/.installed" ] || { err "setup not run (scripts/app/setup.sh)"; return 1; }; [ -d "$ROOT_DIR/venv" ] || { err "missing venv"; return 1; }; (cd "$ROOT_DIR" && PYTHONPATH="$ROOT_DIR:$(pwd)/packages/core/src" "$ROOT_DIR/venv/bin/python" -m vibrae_core.init_db); ok "database initialized"; }
-
-cmd_env_sync(){ ensure_env; local defaults; defaults=$(cat <<'DEFEOF'
-AUTOSTART=false
-MUSIC_MODE=folder
-MUSIC_DIR=music
-USB_SUBDIR=
-VIBRAE_MUSIC=
-FRONTEND_DIST=/apps/web/dist
-# WEB_DIST deprecated; FRONTEND_DIST is canonical
-FRONTEND_PORT=9081
-BACKEND_PORT=8000
-BACKEND_MODULE=apps.api.src.vibrae_api.main:app
-SECRET_KEY=change-me-please
-LOG_LEVEL=INFO
-LOG_KEEP=5
-LOG_ROTATE_INTERVAL_HOURS=12
-DOMAIN=
-NGINX_CONF=nginx.conf
-TUNNEL=cloudflared
-CLOUDFLARE_TUNNEL_TOKEN=
-DEFEOF
-); local added=0; while IFS= read -r line; do [ -z "$line" ] && continue; local key="${line%%=*}" val="${line#*=}"; if ! grep -qE "^${key}=" "$ENV_FILE" 2>/dev/null; then echo "${key}=${val}" >> "$ENV_FILE"; added=$((added+1)); fi; done <<< "$defaults"; [ $added -gt 0 ] && ok "Added $added missing keys" || ok ".env already has recommended keys"; }
-
-cmd_autostart(){
-  case "$1" in
-    on)
-      kv_set AUTOSTART true
-      ok "AUTOSTART=true"
-      # Re-encrypt backend env so .enc stays current
-      if command -v sops >/dev/null 2>&1; then
-        cmd_env_encrypt || warn "re-encrypt failed; run 'vibrae env encrypt' manually"
-      else
-        warn "sops not installed; skipping re-encrypt"
-      fi
+cmd_autostart() {
+  local action="${1:-status}"
+  case "$action" in
+    on|enable|true)
+      env_set "AUTOSTART" "true"
+      ok "Autostart enabled"
+      info "Services will start automatically when entering shell mode"
       ;;
-    off)
-      kv_set AUTOSTART false
-      ok "AUTOSTART=false"
-      if command -v sops >/dev/null 2>&1; then
-        cmd_env_encrypt || warn "re-encrypt failed; run 'vibrae env encrypt' manually"
+    off|disable|false)
+      env_set "AUTOSTART" "false"
+      ok "Autostart disabled"
+      ;;
+    status|"")
+      if [ -f "$ENV_FILE" ]; then
+        set -a
+        . "$ENV_FILE"
+        set +a
+        local current="${AUTOSTART:-false}"
+        if [ "$current" = "true" ]; then
+          ok "Autostart: enabled"
+        else
+          info "Autostart: disabled"
+        fi
       else
-        warn "sops not installed; skipping re-encrypt"
+        warn "Config file not found"
       fi
       ;;
     *)
-      err "usage: vibrae autostart on|off"
+      err "Usage: autostart [on|off|status]"
       return 1
       ;;
   esac
 }
 
-cmd_source_detect(){
-  ensure_env
-  local mode dir label
-  mode="$(kv_get MUSIC_SOURCE_MODE)"; [ -n "$mode" ] || mode="$(kv_get MUSIC_MODE)"; [ -n "$mode" ] || mode="folder"
-  dir="$(kv_get MUSIC_DIR)"; [ -n "$dir" ] || dir="music"
-  label="$(kv_get VIBRAE_MUSIC)"; [ -n "$label" ] || label="$(kv_get USB_VOLUME_LABEL)"
-
-  if [ -z "$label" ] && [ "$mode" = "usb" ]; then
-    warn "VIBRAE_MUSIC not set (USB volume label). USB_VOLUME_LABEL is deprecated; set VIBRAE_MUSIC instead."
-  fi
-  if [ "$mode" = "usb" ]; then
-    [ -n "$label" ] && echo "usb:$label" || echo "usb:(no label)"
-  else
-    echo "folder:$dir"
-  fi
-}
-
-cmd_check_env(){ banner; ensure_env; local ENC_FILE="${ENV_FILE}.enc"; if [ -f "$ENC_FILE" ]; then if [ ! -f "$ENV_FILE" ]; then warn "cannot validate keys until you decrypt the backend env"; echo "Run: vibrae env decrypt"; return 2; fi; if [ "$ENC_FILE" -nt "$ENV_FILE" ]; then warn "encrypted backend env is newer than plaintext; run: vibrae env decrypt"; else ok "encrypted backend env detected (plaintext appears current)"; fi; fi; local issues=0; _VIBRAE_SUPPRESS_TRAP=1; check(){ local k="$1" msg="$2" v; v="$(kv_get "$k" || true)"; if [ -z "${v}" ]; then issues=$((issues+1)); printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "$k" "$msg"; fi; }; check SECRET_KEY "JWT signing secret is required"; check BACKEND_PORT "defaults to 8000 if unset"; check FRONTEND_PORT "defaults to 9081 if unset"; check FRONTEND_DIST "path to exported web (default /apps/web/dist)"; local mode; mode="$(kv_get MUSIC_MODE || true)"; [ -z "$mode" ] && mode="$(kv_get MUSIC_SOURCE_MODE || true)"; if [ -z "$mode" ]; then printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "MUSIC_MODE" "folder|usb (default folder)"; issues=$((issues+1)); fi; if [ "$mode" = "usb" ]; then local label; label="$(kv_get USB_VOLUME_LABEL || true)"; [ -z "$label" ] && label="$(kv_get VIBRAE_MUSIC || true)"; [ -z "$label" ] && printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "VIBRAE_MUSIC" "USB volume label or absolute mount path"; fi; local tunnel; tunnel="$(kv_get TUNNEL || true)"; [ -z "$tunnel" ] && tunnel="cloudflared"; if [ "$tunnel" = "cloudflared" ]; then local tok; tok="$(kv_get CLOUDFLARE_TUNNEL_TOKEN || true)"; [ -z "$tok" ] && printf "  %b•%b %-26s %s\n" "$YELLOW" "$RESET" "CLOUDFLARE_TUNNEL_TOKEN" "required when TUNNEL=cloudflared"; fi; unset _VIBRAE_SUPPRESS_TRAP; [ $issues -eq 0 ] && ok "env looks good" || warn "$issues item(s) to review"; }
-
-cmd_doctor(){ banner; hdr "Tools"; command -v python3 >/dev/null && ok "python3" || err "python3 MISSING"; command -v pip >/dev/null && ok "pip" || err "pip MISSING"; command -v node >/dev/null && ok "node" || warn "node not found (frontend optional)"; command -v npm >/dev/null && ok "npm" || warn "npm not found (frontend optional)"; command -v nginx >/dev/null && ok "nginx" || warn "nginx not found (reverse proxy optional)"; command -v cloudflared >/dev/null && ok "cloudflared" || warn "cloudflared not found (public URL optional)"; if [[ "$(uname)" == "Darwin" ]]; then command -v brew >/dev/null && ok "brew" || warn "brew not found (auto-install skipped)"; fi; hdr "Python"; if [ -d "$ROOT_DIR/venv" ]; then "$ROOT_DIR/venv/bin/python" - <<'PY'
-import sys, os
-USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
-def color(code, s):
-  return f"\033[{code}m{s}\033[0m" if USE_COLOR else s
-def ok(msg):
-  print(f"{color('32','[ok]')} {msg}")
-def warn(msg):
-  print(f"{color('33','[warn]')} {msg}")
-mods=["fastapi","uvicorn","sqlalchemy","pydantic","jose","dotenv","websockets","vlc"]
-missing=[]
-for m in mods:
-  try:
-    __import__(m)
-  except Exception:
-    missing.append(m)
-if missing:
-  warn("missing modules: " + ", ".join(missing))
-else:
-  ok("Python deps present")
-try:
-  import vlc
-  try:
-    _=vlc.Instance()
-    ok("libVLC available")
-  except Exception:
-    warn("libVLC not available; install VLC media player")
-except Exception:
-  pass
-PY
-  else warn "venv not found; run scripts/app/setup.sh"; fi
-  hdr "Sudoers"
-  if command -v sudo >/dev/null 2>&1; then
-    local sf="/etc/sudoers.d/vibrae-$USER"
-    if [ -f "$sf" ]; then
-      ok "sudoers present ($sf)"
-    else
-      if [[ "$(uname)" == "Darwin" ]]; then
-        warn "sudoers missing; run: vibrae mac sudoers"
-      else
-        warn "sudoers missing; run: vibrae systemd sudoers"
-      fi
+cmd_shell() {
+  # Check autostart flag
+  if [ -f "$ENV_FILE" ]; then
+    set -a
+    . "$ENV_FILE"
+    set +a
+    
+    if [ "${AUTOSTART:-false}" = "true" ]; then
+      info "AUTOSTART enabled - starting services..."
+      cmd_start
+      echo ""
+      cmd_status
+      echo ""
     fi
-  else
-    warn "sudo not found; skipping sudoers check"
   fi
-}
-
-
-########################################
-## 06 PI HELPERS
-########################################
-is_pi(){ [ -f /etc/raspberrypi-release ] || grep -qi 'raspberry' /proc/cpuinfo 2>/dev/null || grep -qi 'raspi' /proc/cpuinfo 2>/dev/null; }
-cmd_pi_install(){
-  license_notice
-  if ! is_pi; then warn "Not a Raspberry Pi (continuing anyway)"; fi
-  # Support optional flag: --sudoers|-S to enable passwordless sudo for Vibrae ops
-  local sudoers_flag=""
-  case "${1-}" in
-    --sudoers|-S) sudoers_flag=1; shift || true;;
-  esac
-  if [ -n "$sudoers_flag" ]; then
-    VIBRAE_SUDOERS=1 sudo -E bash "$ROOT_DIR/scripts/pi/setup.sh" | colorize_stream
-  else
-    sudo -E bash "$ROOT_DIR/scripts/pi/setup.sh" | colorize_stream
-  fi
-}
-cmd_pi_start(){ license_notice; [ -f "$ROOT_DIR/.installed" ] || warn "setup has not been run locally; proceeding with Pi systemd start"; sudo bash "$ROOT_DIR/scripts/pi/run.sh" | colorize_stream; }
-cmd_pi_stop(){ license_notice; sudo bash "$ROOT_DIR/scripts/pi/stop.sh" | colorize_stream; }
-cmd_pi_status(){ banner; sudo systemctl --no-pager status vibrae-backend vibrae-frontend vibrae-cloudflared nginx || true; }
-cmd_pi_logs(){ local unit="${1:-vibrae-backend}"; sudo journalctl -u "$unit" -f; }
-
-# Enable extended glob for trimming
-shopt -s extglob 2>/dev/null || true
-
-########################################
-## 07 INTERACTIVE SHELL
-########################################
-run_interactive(){
-  banner
-  if [ ! -f "$ROOT_DIR/.installed" ] || [ ! -d "$ROOT_DIR/venv" ]; then
-    ensure_env || true
-    warn "Vibrae is not installed yet"
-    if [ -t 0 ] && [ -t 1 ]; then
-      if ask_yes_no "Launch guided install wizard now?" Y; then
-        run_wizard
-        echo
-      else
-        onboarding_message
-      fi
-    else
-      onboarding_message
-    fi
-  else
-    autostart_maybe_start || true
-  fi
-  printf "Type 'help' for commands, 'quit' to exit.\n"
+  
+  header "Vibrae Interactive Shell"
+  info "Type commands without 'vibrae' prefix. Type 'exit' or Ctrl+D to quit."
+  echo ""
+  
   while true; do
-    if read -e -r -p "vibrae> " line; then
-      line="${line##+([[:space:]])}"; line="${line%%+([[:space:]])}"
-      case "$line" in
-        "" ) continue ;;
-        quit|exit ) break ;;
-        help ) usage; echo; continue ;;
-        clear ) clear 2>/dev/null || printf '\033c'; echo; continue ;;
-      esac
-      IFS=' ' read -r -a args <<< "$line"
-      set +e; dispatch "${args[@]}"; rc=$?; set -e; echo
-    else
-      break
-    fi
+    printf "${CYAN}vibrae>${RESET} "
+    read -r input || break
+    
+    # Skip empty input
+    [ -z "$input" ] && continue
+    
+    # Exit commands
+    case "$input" in
+      exit|quit|q) ok "Goodbye!"; break ;;
+    esac
+    
+    # Execute command
+    eval "main $input" || true
+    echo ""
   done
 }
 
-########################################
-## 08 DISPATCH & REGISTRY
-########################################
-##
-## Registry: central command index
-## -------------------------------
-## This block holds lightweight metadata for top-level commands. Add new commands
-## by calling `_register` (name fn desc category usage). Command functions are
-## implemented in the 'Command Implementations' section below.
-##
-# Registry format (TAB-separated per line to allow pipes in usage):
-# name\tfunction\tdescription\tcategory\tusage
-_COMMANDS=""
-_register(){
-  # Back-compat: _register name func desc
-  # New form:    _register name func desc category usage
-  local name="$1" fn="$2" desc="${3-}" cat="${4-}" use="${5-}"
-  _COMMANDS="$_COMMANDS
-${name}	${fn}	${desc}	${cat}	${use}"
-}
-_find_fn(){ printf '%s' "$_COMMANDS" | awk -F'\t' -v C="$1" 'NF>=2 && $1==C {print $2; exit}'; }
-_is_registered(){
-  # awk exits 0 even when no match; ensure the output is non-empty
-  local fn
-  fn="$(_find_fn "$1")"
-  if [ -n "$fn" ]; then
+cmd_url() {
+  # Load env file to get configured domain
+  if [ -f "$ENV_FILE" ]; then
+    set -a
+    . "$ENV_FILE"
+    set +a
+  fi
+  
+  local domain="${DOMAIN:-localhost}"
+  
+  # Check if nginx is running on port 80 (unified architecture)
+  if is_running "nginx" && lsof -nP -iTCP:80 -sTCP:LISTEN 2>/dev/null | grep -q nginx; then
+    echo "http://${domain}"
     return 0
-  else
-    return 1
   fi
-}
-# Optional: subcommand registry for richer help blocks
-# Format per line: root\tsubcmd\tdescription\tusage
-_SUBCMDS=""
-_sub_register(){ _SUBCMDS="$_SUBCMDS
-${1}	${2}	${3}	${4}"; }
-_print_subcommands(){
-  local root="$1"
-  local out
-  out=$(printf '%s' "$_SUBCMDS" | awk -F'\t' -v R="$root" 'NF>=2 && $1==R {print $0}')
-  if [ -n "$out" ]; then
-    echo
-    echo "  Subcommands:"
-    printf '%s' "$out" | awk -F'\t' -v B="$BOLD" -v R="$RESET" '
-      { subcmd=$2; desc=$3; use=$4; disp=subcmd; if (use!="") disp=disp " " use;
-        if (length(disp)>maxw) maxw=length(disp); lines[NR]=disp "\t" desc }
-      END{ for(i=1;i<=NR;i++){ split(lines[i],p,"\t"); printf "    %s%-" maxw "s%s  %s\n", B, p[1], R, p[2] } }'
+  
+  # Fallback modes (when nginx not running)
+  local backend_port="${BACKEND_PORT:-8000}"
+  local frontend_port="${FRONTEND_PORT:-9081}"
+  
+  # Check if frontend is running (legacy mode)
+  if is_running "npx serve"; then
+    echo "http://${domain}:${frontend_port}"
+    return 0
   fi
-}
-# Helpers to render sections dynamically
-_print_section(){
-  local want_cat="$1"
-  section "$want_cat"
-  # Filter by category and render unique names only (avoid duplicate aliases in same category)
-  printf '%s' "$_COMMANDS" | awk -F'\t' -v CAT="$want_cat" -v B="$BOLD" -v R="$RESET" '
-    {
-      name=$1; fn=$2; desc=$3; cat=$4; use=$5
-      if (cat==CAT && name!="") {
-        if (!(fn in seenfn)) {
-          i++; disp[i]=name ((use!="")?" " use:""); dsc[i]=desc; seenfn[fn]=1
-          if (length(disp[i])>maxw) maxw=length(disp[i])
-        }
-      }
-    }
-    END{
-      for (j=1;j<=i;j++) {
-        printf "  %s%-" maxw "s%s", B, disp[j], R
-        if (dsc[j]!="") printf "  %s", dsc[j]
-        printf "\n"
-      }
-    }'
-}
-_print_aliases(){
-  # Group aliases: any name sharing the same function with a different primary
-  printf '%s' "$_COMMANDS" | awk -F'\t' -v B="$BOLD" -v R="$RESET" '
-    NF>=3 {
-      fn=$2; name=$1;
-      if (!(fn in first)) { first[fn]=name; }
-      else { aliases[fn]=aliases[fn] " " name; }
-    }
-    END {
-      for (f in aliases) {
-        line=aliases[f]; sub(/^ /, "", line)
-        printf "  %s -> %s\n", line, first[f]
-      }
-    }'
-}
-# List unique primary commands only (dedupe aliases)
-# We consider the first occurrence of a function as the primary entry
-## Unused helpers removed: _list_commands and _list_commands_by_category
-
-# Register primary commands (name func desc category usage)
-_register version       cmd_version         "Show CLI version"                 "Core"              ""
-_register install       cmd_install         "Install/update dependencies"       "Core"              ""
-_register start         cmd_start           "Start all services"                "Core"              ""
-_register up            cmd_start           "Alias for start"                   "Aliases"           ""
-_register stop          cmd_stop            "Stop all services"                 "Core"              ""
-_register down          cmd_stop            "Alias for stop"                    "Aliases"           ""
-_register restart       cmd_restart         "Restart services"                  "Core"              ""
-_register status        cmd_status          "Show service status"               "Core"              ""
-_register st            cmd_status          "Alias for status"                  "Aliases"           ""
-_register logs          cmd_logs            "Tail logs"                         "Core"              "[name] [n]"
-_register front-restart cmd_front_restart   "Restart static frontend server"    "Frontend"          ""
-_register front         cmd_front_root      "Frontend operations"               "Frontend"          "<subcommand>"
-_register front-build   cmd_front_build     "Build/export static frontend"      "Frontend"          "[--restart]"
-_register open          cmd_open            "Open primary URL"                  "Web & URLs"        ""
-_register url           cmd_url             "Print URLs"                        "Web & URLs"        ""
-_register contact       contact_information "Contact info"                      "Misc"              ""
-_register github        cmd_github          "Open GitHub repository"            "Misc"              ""
-## End registry
-
-########################################
-## 09 COMMAND IMPLEMENTATIONS
-########################################
-## Implementations of the functions referenced above live here. Keep functions
-## short and focused; prefer small helpers for repeated logic. To add a new
-## command, add a `_register` entry above and place the `cmd_<name>()` function
-## in this section. If the command has subcommands, provide a `cmd_<name>_root`
-## dispatcher.
-## Quick navigation:
-##  - In the repo: grep -n "^cmd_\|^_help_" vibrae
-##  - From the running script: vibrae shell -> run: list_commands
-_register env           cmd_env_root        "Environment subcommands"           "Environment"       "<subcommand>"
-_register db-init       cmd_db_init         "Initialize database"               "Database"          ""
-_register autostart     cmd_autostart       "Toggle autostart"                  "Music Source"      "on|off"
-_register source-detect cmd_source_detect   "Detect music source"               "Music Source"      ""
-_register check-env     cmd_check_env       "Validate environment"              "Diagnostics"       ""
-_register ce            cmd_check_env       "Alias for check-env"               "Aliases"           ""
-_register doctor        cmd_doctor          "Doctor diagnostics"                "Diagnostics"       ""
-_register doc           cmd_doctor          "Alias for doctor"                  "Aliases"           ""
-_register shell         run_interactive     "Interactive shell"                 "Misc"              ""
-_register sh            run_interactive     "Alias for shell"                   "Aliases"           ""
-_register wizard        run_wizard          "Interactive install wizard"        "Misc"              ""
-_register ahelp         cmd_alias_help      "Show alias help"                   "Misc"              ""
-_register systemd       cmd_pi_root         "Systemd (Linux) helpers"           "Systemd (Linux)"   "<subcommand>"
-_register sys           cmd_pi_root         "Alias for systemd helpers"         "Aliases"           ""
-_register pi            cmd_pi_root         "Alias for systemd helpers"         "Aliases"           ""
-_register mac           cmd_mac_root        "macOS helpers"                     "macOS"             "<subcommand>"
-_register help          cmd_help            "Show help"                         "Misc"              ""
-_register --help        cmd_help            "Show help"                         "Aliases"           ""
-_register -h            cmd_help            "Show help"                         "Aliases"           ""
-_register ls-env        cmd_env_show        "Alias for env show"                "Aliases"           ""
-
-# Subcommand registrations (for richer help)
-_sub_register env        "show|ls|cat"      "Print backend env (.env.backend)"            ""
-_sub_register env        edit               "Open backend env file in editor"             ""
-_sub_register env        set                "Add or replace a key"                         "KEY=VALUE"
-_sub_register env        get                "Print single value (empty if unset)"         "KEY"
-_sub_register env        sync               "Append missing recommended keys"              ""
-_sub_register env        encrypt            "Encrypt backend env -> .env.backend.enc"     ""
-_sub_register env        decrypt            "Decrypt encrypted backend env to plaintext"  ""
-_sub_register env        edit-sec           "Decrypt, edit, re-encrypt backend env"       ""
-
-_sub_register env-front  "f-show|f-cat"     "Print frontend env (.env.frontend)"          ""
-_sub_register env-front  f-edit             "Open frontend env file in editor"            ""
-_sub_register env-front  f-set              "Set/add a frontend key"                      "KEY=VALUE"
-_sub_register env-front  f-get              "Print frontend single value"                 "KEY"
-_sub_register env-front  f-sync             "Append missing recommended frontend keys"    ""
-_sub_register env-front  f-encrypt          "Encrypt frontend env"                        ""
-_sub_register env-front  f-decrypt          "Decrypt frontend env"                        ""
-_sub_register env-front  f-edit-sec         "Decrypt, edit, re-encrypt frontend env"      ""
-
-_sub_register front      restart            "Restart static server (npx serve) only"      ""
-_sub_register front      "build|export|rebuild" "Rebuild static web (Expo export)"        ""
-
-_sub_register systemd    install            "Configure systemd + nginx on Linux"          "[--sudoers|-S]"
-_sub_register systemd    start              "Start services via systemd (sudo)"           ""
-_sub_register systemd    stop               "Stop services (sudo)"                         ""
-_sub_register systemd    status             "Systemd status summary (sudo)"                ""
-_sub_register systemd    logs               "Follow journal for unit (sudo)"               "[unit]"
-_sub_register systemd    sudoers            "Add limited NOPASSWD rule"                    ""
-
-_sub_register mac        sudoers            "Install limited NOPASSWD sudoers rule"        "[--rerun|-R]"
-
-cmd_version(){ echo "vibrae ${VERSION}"; }
-_help_version(){ help_banner; section "Version"; echo "  vibrae $VERSION"; }
-cmd_env_root(){
-  case "${1-}" in
-    ''|-h|--help|help) _help_env; return 0;;
-    show|ls|cat) shift; cmd_env_show;;
-    edit) shift; cmd_env_edit;;
-    encrypt) shift; cmd_env_encrypt;;
-    decrypt) shift; cmd_env_decrypt;;
-    edit-sec) shift; cmd_env_edit_sec;;
-    f-encrypt) shift; cmd_env_f_encrypt;;
-    f-decrypt) shift; cmd_env_f_decrypt;;
-    f-edit-sec) shift; cmd_env_f_edit_sec;;
-  f-show|f-cat) shift; cmd_env_f_show;;
-  f-edit) shift; cmd_env_f_edit;;
-  f-set) shift; cmd_env_f_set "$@";;
-  f-get) shift; cmd_env_f_get "$@";;
-  f-sync) shift; cmd_env_f_sync;;
-    set) shift; cmd_env_set "$@";;
-    get) shift; env_get "$@";;
-    sync) shift; cmd_env_sync;;
-    help) shift; _help_env;;
-    *) err "env: unknown subcommand '${1-}'"; env_help; return 1;;
-  esac
-}
-_help_env(){
-  help_banner
-  section "Backend Environment"
-  echo "  Usage: vibrae env <subcommand> [args]"; echo
-  _print_subcommands env
-  section "Frontend Environment"
-  echo "  Usage: vibrae env <subcommand> [args]"; echo
-  _print_subcommands env-front
-  echo
-  echo "Notes:"; cat <<'EOC'
-    - Never commit plaintext env files
-    - If only .enc exists run: vibrae env decrypt
-    - sync will NOT overwrite existing values
-    - Use edit-sec for safe secret changes
-EOC
-}
-cmd_pi_sudoers(){
-  banner; section "Pi sudoers"
-  local user="$USER"
-  local sudoers_file="/etc/sudoers.d/vibrae-$user"
-  local SYSTEMCTL_PATH JOURNALCTL_PATH
-  SYSTEMCTL_PATH="$(command -v systemctl || echo /bin/systemctl)"
-  JOURNALCTL_PATH="$(command -v journalctl || echo /bin/journalctl)"
-  local tmp; tmp="$(mktemp 2>/dev/null || echo "/tmp/vibrae_pi_sudoers_${user}.$$")"
-  cat > "$tmp" <<SUDO
-Cmnd_Alias VIBRAE_CMDS = \
-  $SYSTEMCTL_PATH start vibrae-*, \
-  $SYSTEMCTL_PATH stop vibrae-*, \
-  $SYSTEMCTL_PATH restart vibrae-*, \
-  $SYSTEMCTL_PATH status vibrae-*, \
-  $SYSTEMCTL_PATH start nginx, \
-  $SYSTEMCTL_PATH stop nginx, \
-  $SYSTEMCTL_PATH restart nginx, \
-  $SYSTEMCTL_PATH status nginx, \
-  $JOURNALCTL_PATH -u vibrae-*, \
-  $JOURNALCTL_PATH -u nginx, \
-  /bin/bash $ROOT_DIR/scripts/pi/setup.sh, \
-  /bin/bash $ROOT_DIR/scripts/pi/run.sh, \
-  /bin/bash $ROOT_DIR/scripts/pi/stop.sh
-$user ALL=(root) NOPASSWD: VIBRAE_CMDS
-SUDO
-  echo "Installing sudoers file: $sudoers_file"
-  if ! sudo install -m 440 "$tmp" "$sudoers_file"; then
-    err "failed to install sudoers file"
-    rm -f "$tmp" 2>/dev/null || true
-    return 1
+  
+  # Fall back to backend only
+  if is_running "uvicorn.*vibrae"; then
+    echo "http://${domain}:${backend_port}"
+    return 0
   fi
-  rm -f "$tmp" 2>/dev/null || true
-  ok "sudoers installed for user $user"
-}
-cmd_pi_root(){ case "${1-}" in -h|--help|help|'') _help_pi; return 0;; install) shift; cmd_pi_install "$@";; start) shift; cmd_pi_start "$@";; stop) shift; cmd_pi_stop "$@";; status) shift; cmd_pi_status "$@";; logs) shift; cmd_pi_logs "$@";; sudoers) shift; cmd_pi_sudoers "$@";; *) err "systemd: unknown subcommand '${1-}'"; return 1;; esac }
-_help_pi(){ help_banner; section "Systemd (Linux)"; cat <<'HPI'
-  Usage: vibrae systemd <install|start|stop|status|logs|sudoers> [options]
-         (aliases: sys, pi)
-
-  install [--sudoers|-S]  Configure systemd + nginx on Linux
-                          --sudoers adds a limited passwordless sudoers rule
-  start                   Start services via systemd (sudo)
-  stop                    Stop services (sudo)
-  status                  Systemd status summary (sudo)
-  logs [unit]             Follow journal for unit (sudo; default vibrae-backend)
-  sudoers                 Add NOPASSWD rule without reinstalling
-
-Notes:
-  - 'systemd install' preserves env via sudo -E, so AGE/GPG/GIT_SSH_* can be passed.
-  - Enable passwordless sudo later by re-running: vibrae systemd install --sudoers
-  - Or run independently anytime: vibrae systemd sudoers
-HPI
+  
+  err "No services running"
+  return 1
 }
 
-########################################
-## Core command implementations (grouped)
-########################################
-
-# Real implementations moved here for easier navigation. Thin wrappers above call these.
-cmd_impl_install(){ run_script scripts/app/setup.sh; }
-
-cmd_impl_start(){
-  # Require install stamp and venv
-  if [ ! -f "$ROOT_DIR/.installed" ]; then err "setup has not been run. Run: scripts/app/setup.sh or 'vibrae install'"; return 1; fi
-  if [ ! -d "$ROOT_DIR/venv" ]; then err "missing venv. Run: scripts/app/setup.sh"; return 1; fi
-  run_script run.sh;
-}
-
-cmd_impl_stop(){ run_script stop.sh; }
-
-cmd_impl_restart(){
-  [ -f "$ROOT_DIR/.installed" ] || { err "setup has not been run. Run: scripts/app/setup.sh or 'vibrae install'"; return 1; };
-  [ -d "$ROOT_DIR/venv" ] || { err "missing venv. Run: scripts/app/setup.sh"; return 1; };
-  license_notice; cmd_impl_stop || true; cmd_impl_start;
-}
-
-
-########################################
-## Environment command implementations
-########################################
-
-cmd_impl_env_show(){ ensure_env; cat "$ENV_FILE"; }
-cmd_impl_env_edit(){ ensure_env; if [[ "$(uname)" == "Darwin" ]] && [ -z "${EDITOR-}${VISUAL-}" ]; then open -e "$ENV_FILE"; else ${EDITOR:-${VISUAL:-nano}} "$ENV_FILE"; fi }
-cmd_impl_env_set(){
-  local kv="$1"; if ! echo "$kv" | grep -q '='; then err "usage: vibrae env set KEY=VALUE"; return 1; fi
-  local key="${kv%%=*}"; local val="${kv#*=}"; kv_set "$key" "$val"; ok "$key set"
-}
-
-# Frontend env command counterparts (impls)
-cmd_impl_env_f_show(){ ensure_front_env; cat "$FRONT_ENV_FILE"; }
-cmd_impl_env_f_edit(){ ensure_front_env; if [[ "$(uname)" == "Darwin" ]] && [ -z "${EDITOR-}${VISUAL-}" ]; then open -e "$FRONT_ENV_FILE"; else ${EDITOR:-${VISUAL:-nano}} "$FRONT_ENV_FILE"; fi }
-cmd_impl_env_f_set(){ local kv="$1"; if ! echo "$kv" | grep -q '='; then err "usage: vibrae env f-set KEY=VALUE"; return 1; fi; local key="${kv%%=*}" val="${kv#*=}"; f_kv_set "$key" "$val"; ok "frontend $key set"; }
-cmd_impl_env_f_get(){ ensure_front_env; local k="$1"; [ -z "$k" ] && { err "usage: vibrae env f-get KEY"; return 1; }; f_kv_get "$k" || true; }
-cmd_impl_env_f_sync(){ ensure_front_env; local defaults; defaults=$(cat <<'DEFEOF_FE'
-EXPO_PUBLIC_API_BASE=/api
-DEFEOF_FE
-); local added=0; while IFS= read -r line; do [ -z "$line" ] && continue; local key="${line%%=*}" val="${line#*=}"; if ! grep -qE "^${key}=" "$FRONT_ENV_FILE" 2>/dev/null; then echo "${key}=${val}" >> "$FRONT_ENV_FILE"; added=$((added+1)); fi; done <<< "$defaults"; [ $added -gt 0 ] && ok "Frontend env: added $added missing keys" || ok "Frontend env already has recommended keys"; }
-
-cmd_impl_env_get(){ ensure_env; local k="$1"; [ -z "$k" ] && { err "usage: vibrae env get KEY"; return 1; }; kv_get "$k" || true; }
-
-# SOPS wrappers (impls)
-cmd_impl_env_encrypt(){ sops_check || return 1; local plain enc; plain="$(sec_plain)"; enc="$(sec_enc)"; [ -f "$plain" ] || { err "plaintext backend env $(basename "$plain") not found"; return 1; }; grep -qE '^[A-Z0-9_]+=.*' "$plain" || { err "refusing to encrypt empty env (no KEY= lines)"; return 1; }; _sops_run encrypt "$plain" "$enc" || return 1; ok "encrypted -> $(basename "$enc") (plaintext kept; DO NOT COMMIT)"; }
-cmd_impl_env_decrypt(){ sops_check || return 1; local plain enc; plain="$(sec_plain)"; enc="$(sec_enc)"; if [ ! -f "$enc" ]; then err "encrypted backend file missing: $(basename "$enc")"; return 1; fi; _sops_run decrypt "$enc" "$plain" || return 1; ok "decrypted to $(basename "$plain") (DO NOT COMMIT)"; }
-cmd_impl_env_edit_sec(){ sops_check || return 1; local enc plain; enc="$(sec_enc)"; plain="$(sec_plain)"; [ -f "$enc" ] || { err "missing encrypted backend file: $(basename "$enc")"; return 1; }; _sops_run decrypt "$enc" "$plain" || return 1; ${EDITOR:-${VISUAL:-nano}} "$plain"; _sops_run encrypt "$plain" "$enc" || return 1; ok "updated $(basename "$enc") (plaintext retained; DO NOT COMMIT)"; }
-cmd_impl_env_f_encrypt(){
-  sops_check || return 1
-  local plain enc; plain="$(sec_front_plain)"; enc="$(sec_front_enc)"
-  if [ ! -f "$plain" ]; then err "plaintext $(basename "$plain") not found"; return 1; fi
-  _sops_run encrypt "$plain" "$enc" || return 1
-  ok "encrypted -> $(basename "$enc") (plaintext kept; DO NOT COMMIT)"
-}
-cmd_impl_env_f_decrypt(){ sops_check || return 1; local plain enc; plain="$(sec_front_plain)"; enc="$(sec_front_enc)"; if [ ! -f "$enc" ]; then err "encrypted file missing: $(basename "$enc")"; return 1; fi; _sops_run decrypt "$enc" "$plain" || return 1; ok "decrypted to $(basename "$plain") (DO NOT COMMIT)"; }
-cmd_impl_env_f_edit_sec(){ sops_check || return 1; local enc plain; enc="$(sec_front_enc)"; plain="$(sec_front_plain)"; [ -f "$enc" ] || { err "missing encrypted file: $(basename "$enc")"; return 1; }; _sops_run decrypt "$enc" "$plain" || return 1; ${EDITOR:-${VISUAL:-nano}} "$plain"; _sops_run encrypt "$plain" "$enc" || return 1; ok "updated $(basename "$enc") (plaintext retained; DO NOT COMMIT)"; }
-
-########################################
-## Frontend command implementations
-########################################
-
-cmd_impl_front_restart(){
-  case "${1-}" in -h|--help|help) _help_front_restart; return 0;; esac
-  banner; section "Frontend restart"
-  pkill -f "(serve -s|npx serve)" >/dev/null 2>&1 || true
-  sleep 0.5
-  FRONTEND_DIST_VAL="$(kv_get FRONTEND_DIST)"; [ -n "$FRONTEND_DIST_VAL" ] || FRONTEND_DIST_VAL="/apps/web/dist"
-  SERVE_ROOT="$ROOT_DIR$FRONTEND_DIST_VAL"
-  PORT_VAL="$(kv_get FRONTEND_PORT)"; [ -n "$PORT_VAL" ] || PORT_VAL=9081
-  if command -v npx >/dev/null 2>&1 && [ -d "$SERVE_ROOT" ]; then
-    mkdir -p "$LOG_DIR" 2>/dev/null || true
-    echo "----- $(date) front restart on :$PORT_VAL -----" >> "$LOG_DIR/serve.log"
-    (cd "$ROOT_DIR" && FRONTEND_MODE=npx nohup npx serve -s "$SERVE_ROOT" -l "$PORT_VAL" >> "$LOG_DIR/serve.log" 2>&1 &)
-    ok "frontend restarted on :$PORT_VAL (mode=npx)"
-  else
-    warn "npx or export missing; backend will serve static files if available"
-  fi
-}
-
-cmd_impl_front_build(){
-  case "${1-}" in -h|--help|help) _help_front_build; return 0;; esac
-  banner; section "Frontend build"
-  local APP_DIR="$ROOT_DIR/apps/web"
-  if [ ! -d "$APP_DIR" ]; then err "apps/web not found"; return 1; fi
-  if ! command -v node >/dev/null 2>&1 || ! command -v npx >/dev/null 2>&1; then err "node/npm (npx) not found. Install Node.js."; return 1; fi
-  local do_restart=0
-  case "${1-}" in --restart|-r) do_restart=1;; esac
-  # Stop static server while rebuilding to avoid serving partial files
-  section "Stopping static server (if running)"
-  pkill -f "(serve -s|npx serve)" >/dev/null 2>&1 || true
-  sleep 0.5
-  # Install deps if node_modules missing
-  if [ ! -d "$APP_DIR/node_modules" ]; then
-    section "Installing frontend dependencies (npm ci)"
-    (cd "$APP_DIR" && npm ci) || { err "npm ci failed"; return 1; }
-  fi
-  section "Exporting static web build (expo export)"
-  (cd "$APP_DIR" && npx expo export --platform web) || { err "expo export failed"; return 1; }
-  # Verify build output exists
-  local FRONTEND_DIST_VAL; FRONTEND_DIST_VAL="$(kv_get FRONTEND_DIST)"; [ -n "$FRONTEND_DIST_VAL" ] || FRONTEND_DIST_VAL="/apps/web/dist"
-  local SERVE_ROOT="$ROOT_DIR$FRONTEND_DIST_VAL"
-  if [ -d "$SERVE_ROOT" ]; then ok "build ready at $FRONTEND_DIST_VAL"; else warn "build output not found at $FRONTEND_DIST_VAL"; fi
-  if [ $do_restart -eq 1 ]; then
-    cmd_impl_front_restart
-  else
-    echo "Tip: run 'vibrae front restart' to serve the new build."
-  fi
-}
-
-
-
-########################################
-## 07b MAC HELPERS
-########################################
-_resolve_abs(){
-  # Usage: _resolve_abs <name> [fallback_paths...]
-  # Prints an absolute, executable path for the command name. If `command -v` returns
-  # a builtin (e.g., "kill") or a non-absolute, tries provided fallbacks. As a last
-  # resort for known builtins, returns a sensible default to avoid sudoers parse errors.
-  local name="$1"; shift || true
-  local res
-  res="$(command -v "$name" 2>/dev/null || true)"
-  case "$res" in
-    /*)
-      if [ -x "$res" ]; then echo "$res"; return 0; fi
+cmd_open() {
+  local url
+  url=$(cmd_url) || return 1
+  info "Opening $url"
+  
+  # Detect OS and open browser
+  case "$(uname)" in
+    Darwin) open "$url" ;;
+    Linux) 
+      if command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "$url"
+      else
+        err "Cannot open browser (xdg-open not found)"
+        info "Visit: $url"
+        return 1
+      fi
+      ;;
+    *)
+      err "Unsupported OS"
+      info "Visit: $url"
+      return 1
       ;;
   esac
-  # Try provided fallbacks
-  local p
-  for p in "$@"; do
-    if [ -n "$p" ] && [ -x "$p" ]; then echo "$p"; return 0; fi
-  done
-  # Known special cases
-  case "$name" in
-    kill)
-      for p in /bin/kill /usr/bin/kill; do [ -x "$p" ] && echo "$p" && return 0; done
-      echo /bin/kill; return 0;;
-  esac
-  # Fallback to whatever was found (may be empty); better than an unexpanded var.
-  echo "$res"
-}
-cmd_mac_sudoers(){
-  banner; section "macOS sudoers"
-  if [[ "$(uname)" != "Darwin" ]]; then warn "This helper is intended for macOS"; fi
-  local user="$USER"
-  local nginx_bin pkill_bin ctl_script run_script stop_script kill_bin sudoers_file
-  nginx_bin="$(_resolve_abs nginx /opt/homebrew/bin/nginx /usr/local/bin/nginx /usr/sbin/nginx)"
-  pkill_bin="$(_resolve_abs pkill /usr/bin/pkill /usr/local/bin/pkill)"
-  kill_bin="$(_resolve_abs kill /bin/kill /usr/bin/kill)"
-  ctl_script="$ROOT_DIR/scripts/nginxctl.sh"
-  run_script="$ROOT_DIR/scripts/app/run.sh"
-  stop_script="$ROOT_DIR/scripts/app/stop.sh"
-  sudoers_file="/etc/sudoers.d/vibrae-${user}"
-  # Optional: --rerun|-R to remove and recreate the sudoers file
-  local rerun=""
-  case "${1-}" in
-    --rerun|-R|rerun) rerun=1; shift || true;;
-  esac
-  if [ -n "$rerun" ]; then
-    section "Reinstall sudoers"
-    echo "Removing existing sudoers (if present): $sudoers_file"
-    sudo rm -f "$sudoers_file" || true
-  fi
-  if [ ! -x "$nginx_bin" ]; then warn "nginx not found; install via Homebrew (brew install nginx)"; fi
-  section "Writing sudoers entry (requires admin)"
-  local tmp; tmp="$(mktemp 2>/dev/null || echo "/tmp/vibrae_sudoers_${user}.$$")"
-  cat >"$tmp" <<SUDO
-Cmnd_Alias VIBRAE_MAC = \
-  $nginx_bin, \
-  $pkill_bin, \
-  $kill_bin, \
-  /bin/bash $ctl_script, \
-  $ctl_script, \
-  $run_script, \
-  $stop_script
-$user ALL=(root) NOPASSWD: VIBRAE_MAC
-SUDO
-  # Validate before installing to prevent sudoers lockout or parse errors
-  local visudo_bin
-  visudo_bin="$(command -v visudo || echo /usr/sbin/visudo)"
-  if ! sudo "$visudo_bin" -cf "$tmp"; then
-    err "sudoers validation failed (visudo). Not installing."
-    echo "---- Proposed sudoers content ----"
-    sed -n '1,120p' "$tmp" || true
-    rm -f "$tmp" 2>/dev/null || true
-    return 1
-  fi
-  echo "Creating $sudoers_file"
-  if ! sudo install -m 440 "$tmp" "$sudoers_file"; then
-    err "failed to write sudoers"
-    rm -f "$tmp" 2>/dev/null || true
-    return 1
-  fi
-  rm -f "$tmp" 2>/dev/null || true
-  ok "sudoers installed: $sudoers_file"
-  echo "Notes:"
-  echo "  - Grants NOPASSWD for nginx, pkill, kill, nginxctl.sh, run.sh, and stop.sh (limited to this repo path)."
-  echo "  - If your repo path changes, re-run: vibrae mac sudoers"
-  if [ -n "$rerun" ]; then
-    echo "  - Reinstalled sudoers (removed old file before writing)"
-  fi
-}
-cmd_mac_root(){ case "${1-}" in ''|-h|--help|help) _help_mac; return 0;; sudoers) shift; cmd_mac_sudoers "$@";; *) err "mac: unknown subcommand '${1-}'"; return 1;; esac }
-_help_mac(){ help_banner; section "macOS"; cat <<'HMAC'
-  Usage: vibrae mac <sudoers>
-
-  sudoers [--rerun|-R]
-             Install (or reinstall) a limited NOPASSWD sudoers rule to control nginx
-             and the helper script without re-entering your password.
-
-Notes:
-  - Applies to nginx start/stop (via nginx or nginxctl.sh) and pkill for cleanup.
-  - On macOS, binding to :80 requires elevated privileges; this avoids prompts.
-HMAC
-}
-cmd_alias_help(){ echo "Aliases:"; _print_aliases; }
-_help_start(){ help_banner; section "Start"; _print_cmd_help_block start; }
-_help_logs(){ help_banner; section "Logs"; _print_cmd_help_block logs; }
-_help_front_restart(){ help_banner; section "Front Restart"; _print_cmd_help_block front-restart; }
-cmd_front_root(){
-  case "${1-}" in
-    -h|--help|help|'') _help_front; return 0;;
-  restart) shift; cmd_front_restart "$@";;
-  build|export|rebuild) shift; cmd_front_build "$@";;
-    *) err "front: unknown subcommand '${1-}'"; _help_front; return 1;;
-  esac
-}
-_help_front(){
-  help_banner; section "Frontend"; _print_cmd_help_block front; _print_subcommands front; cat <<'HF_NOTES'
-
-  Notes:
-    - Not for env operations (use: vibrae env ...)
-    - Falls back to backend static serving if npx serve missing
-    - Use 'vibrae front build --restart' to rebuild and restart in one step
-HF_NOTES
-}
-_help_front_build(){ help_banner; section "Front Build"; _print_cmd_help_block front-build; }
-cmd_help(){ if [ -n "${1-}" ]; then _show_cmd_help "$1"; else usage; fi }
-_show_cmd_help(){
-  HELP_BANNER_SHOWN=""
-  local c="$1"; local helper="_help_${c//-/_}"
-  if command -v "$helper" >/dev/null 2>&1; then "$helper"; return $?; fi
-  _gen_cmd_help "$c"
+  ok "Browser opened"
 }
 
-# Auto-generate detailed help for commands using the registry metadata
-_gen_cmd_help(){
-  local c="$1"; help_banner
-  # Resolve primary (canonical) command name for title when alias is used
-  local pname; pname="$(_primary_name_for "$c")"
-  # Title from canonical name (kebab-case -> words). Capitalize first letter (portable)
-  local title="${pname//-/ }"
-  local first_char rest first_up
-  first_char="${title%${title#?}}"; rest="${title#?}"
-  first_up="$(printf '%s' "$first_char" | tr '[:lower:]' '[:upper:]')"; title="${first_up}${rest}"
-  section "$title"
-  _print_cmd_help_block "$c"
+cmd_db_init() {
+  header "Initializing Database"
+  ensure_venv "$VENV" || return 1
+  cd "$ROOT_DIR"
+  "$VENV/bin/python" -c "from packages.core.src.vibrae_core.init_db import init_db; init_db()" || { err "DB init failed"; return 1; }
+  ok "Database initialized"
 }
 
-# Print standard Usage/Description/Category/Aliases block for a command (no header)
-_print_cmd_help_block(){
-  local c="$1"
-  printf '%s' "$_COMMANDS" | awk -F"\t" -v CMD="$c" -v B="$BOLD" -v R="$RESET" '
-    BEGIN{ found=0 }
-    {
-      name=$1; fn=$2; desc=$3; cat=$4; use=$5
-      if (name==CMD) { c_fn=fn; c_name=name; c_desc=desc; c_cat=cat; c_use=use; found=1 }
-      if (fn!="" && !(fn in first)) { first[fn]=name }
-      if (fn!="" && name!="") { names_for_fn[fn]=(names_for_fn[fn] " " name) }
-      if (cat!="Aliases" && !(fn in primary)) { primary[fn]=name; p_use[fn]=use; p_desc[fn]=desc; p_cat[fn]=cat }
-    }
-    END{
-      if (!found) { printf "✖ Unknown command: %s\n", CMD; exit 1 }
-      p=primary[c_fn]; if (p=="") p=c_name
-      use=p_use[c_fn]; if (use=="") use=c_use
-      desc=p_desc[c_fn]; if (desc=="") desc=c_desc
-      cat=p_cat[c_fn]; if (cat=="") cat=c_cat
-      # Usage
-      printf "  %sUsage:%s vibrae %s", B, R, p
-      if (use!="") printf " %s", use
-      printf "\n\n"
-      # Description
-      if (desc!="") printf "  %sDescription:%s %s\n\n", B, R, desc
-      # Category
-      if (cat!="") printf "  %sCategory:%s %s\n\n", B, R, cat
-      # Aliases
-      line=names_for_fn[c_fn]; sub(/^ /, "", line)
-      cnt=0; split(line, arr, /[ ]+/); out=""
-      for (i in arr) { n=arr[i]; if (n==p || n=="") continue; cnt++; out=out ((out!="")?", ":"") n }
-      if (cnt>0) printf "  %sAliases:%s %s\n", B, R, out
-    }'
+cmd_help() {
+  cat <<EOF
+${BOLD}${BLUE}Vibrae${RESET} - Music Automation System
+
+${BOLD}Usage:${RESET} vibrae <command> [args]
+
+${BOLD}${GREEN}Core Commands:${RESET}
+  ${CYAN}start${RESET}, ${CYAN}up${RESET}        Start all services
+  ${CYAN}stop${RESET}, ${CYAN}down${RESET}       Stop all services
+  ${CYAN}restart${RESET}           Restart services
+  ${CYAN}status${RESET}, ${CYAN}st${RESET}       Show service status
+  ${CYAN}open${RESET}              Open app in browser
+  ${CYAN}url${RESET}               Show app URL
+  
+${BOLD}${GREEN}Development:${RESET}
+  ${CYAN}install${RESET}           Install dependencies
+  ${CYAN}test${RESET}              Run test suite
+  ${CYAN}logs${RESET} [name]       Tail logs (backend, player, etc.)
+  ${CYAN}config${RESET}            Edit configuration
+  ${CYAN}autostart${RESET} [on|off] Toggle autostart for shell mode
+  ${CYAN}db-init${RESET}           Initialize database
+  
+${BOLD}${GREEN}Environment:${RESET}
+  ${CYAN}env${RESET} <subcmd>      Config management (run: vibrae env help)
+  
+${BOLD}${GREEN}Info:${RESET}
+  ${CYAN}version${RESET}, ${CYAN}-v${RESET}      Show version
+  ${CYAN}help${RESET}, ${CYAN}-h${RESET}         Show this help
+  ${CYAN}shell${RESET}             Interactive shell mode
+
+${BOLD}Examples:${RESET}
+  vibrae                  ${GREY}# Interactive shell${RESET}
+  vibrae install          ${GREY}# Install${RESET}
+  vibrae env init         ${GREY}# Create config${RESET}
+  vibrae start            ${GREY}# Start services${RESET}
+  vibrae open             ${GREY}# Open in browser${RESET}
+  vibrae logs backend     ${GREY}# View logs${RESET}
+  vibrae env encrypt      ${GREY}# Encrypt config${RESET}
+EOF
 }
 
-# Return the primary (non-Aliases) registered name for a command or the command itself
-_primary_name_for(){
-  local c="$1"
-  printf '%s' "$_COMMANDS" | awk -F'\t' -v CMD="$c" '
-    {
-      name=$1; fn=$2; cat=$4
-      if (name==CMD) tgt_fn=fn
-      if (fn!="" && !(fn in first)) { first[fn]=name }
-      if (fn!="" && !(fn in primary) && cat!="Aliases") { primary[fn]=name }
-    }
-    END{
-      if (tgt_fn!="") {
-        if (primary[tgt_fn]!="") print primary[tgt_fn];
-        else if (first[tgt_fn]!="") print first[tgt_fn];
-        else print CMD;
-      } else print CMD;
-    }'
-}
-
-## Duplicate subcommand registry removed; defined earlier alongside other registry helpers
-
-dispatch(){
-  local cmd="${1-}"
-  if [ -z "$cmd" ]; then
-    if [ ! -f "$ROOT_DIR/.installed" ] || [ ! -d "$ROOT_DIR/venv" ]; then
-      if [ -t 0 ] && [ -t 1 ]; then
-        run_wizard
-      else
-        onboarding_message
-      fi
-      return 0
-    else
-      run_interactive; return 0
-    fi
-  fi
-  # Map 'restart -front' or 'restart front' to frontend-only restart
-  if [ "$cmd" = "restart" ] && { [ "${2-}" = "-front" ] || [ "${2-}" = "front" ]; }; then
-    cmd="front"
-    # Preserve any additional flags (e.g., -h) when remapping
-    set -- front restart "${@:3}"
-  fi
-  # Map db init -> db-init
-  if [ "$cmd" = "db" ] && [ "${2-}" = "init" ]; then shift; cmd="db-init"; shift || true; fi
-  # Source detect -> source-detect
-  if [ "$cmd" = "source" ] && [ "${2-}" = "detect" ]; then shift; cmd="source-detect"; shift || true; fi
-  if ! _is_registered "$cmd"; then err "Unknown command: $cmd"; echo "Run 'vibrae help' for list."; return 1; fi
+# Main router
+main() {
+  local cmd="${1:-shell}"
   shift || true
-  local fn; fn="$(_find_fn "$cmd")"
-  if [ -z "$fn" ]; then err "internal dispatch error ($cmd)"; return 2; fi
-  case "$cmd" in env|pi|front) "$fn" "$@"; return $?;; esac
-  case "${1-}" in -h|--help|help) _show_cmd_help "$cmd"; return 0;; esac
-  "$fn" "$@"
-  return $?
+  case "$cmd" in
+    start|up) cmd_start "$@" ;;
+    stop|down) cmd_stop "$@" ;;
+    restart) cmd_restart "$@" ;;
+    status|st) cmd_status "$@" ;;
+    open) cmd_open "$@" ;;
+    url) cmd_url "$@" ;;
+    shell|sh) cmd_shell "$@" ;;
+    install) cmd_install "$@" ;;
+    test) cmd_test "$@" ;;
+    logs) cmd_logs "$@" ;;
+    config) cmd_config "$@" ;;
+    autostart) cmd_autostart "$@" ;;
+    db-init) cmd_db_init "$@" ;;
+    env) env_main "$@" ;;
+    version|--version|-v) cmd_version "$@" ;;
+    help|--help|-h) cmd_help "$@" ;;
+    *) err "Unknown command: $cmd"; echo ""; info "Run 'vibrae help'"; return 1 ;;
+  esac
 }
 
-########################################
-## 09 MAIN
-########################################
-main(){ _VIBRAE_TRAP_READY=1; export _VIBRAE_TRAP_READY; unset _VIBRAE_SUPPRESS_TRAP 2>/dev/null || true; dispatch "$@"; rc=$?; return $rc; }
-
-# Enable -u late to avoid early false ERR triggers
-if [ -n "${DEFER_SET_U:-}" ]; then
-  set -u
-  unset DEFER_SET_U
-fi
-
-main "$@"; exit $?
+main "$@"

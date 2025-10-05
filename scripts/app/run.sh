@@ -130,10 +130,10 @@ FRONTEND_DIST="${FRONTEND_DIST:-/apps/web/dist}"
 FRONTEND_PORT="${FRONTEND_PORT:-9081}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 BACKEND_MODULE="${BACKEND_MODULE:-apps.api.src.vibrae_api.main:app}"
-
-# (frontend already handled in layered section above)
+NGINX_CONF="${NGINX_CONF:-$ROOT_DIR/config/nginx.conf}"
 
 SERVE_ROOT="$ROOT_DIR$FRONTEND_DIST"
+export FRONTEND_ROOT="$SERVE_ROOT"  # For nginx config substitution
 if [ ! -d "$SERVE_ROOT" ]; then
   if command -v npm >/dev/null 2>&1; then
     warn "missing frontend export at $SERVE_ROOT; exporting now"
@@ -144,14 +144,36 @@ if [ ! -d "$SERVE_ROOT" ]; then
 fi
 
 # Frontend (static)
-if command -v npx >/dev/null 2>&1 && [ -d "$SERVE_ROOT" ]; then
-  info "frontend: port $FRONTEND_PORT"
-  rotate_log "$LOG_DIR/serve.log" "$LOG_KEEP" "$HISTORY_DIR"
-  echo "----- $(date) start serve on :$FRONTEND_PORT -----" >> "$LOG_DIR/serve.log"
-  export FRONTEND_MODE=npx
-  log_cmd "$LOG_DIR/serve.log" npx serve -s "$SERVE_ROOT" -l "$FRONTEND_PORT"
+# Only start npx serve if nginx is disabled (nginx can serve static files directly)
+OS_TYPE=$(uname)
+NGINX_WILL_RUN=0
+if [[ "$OS_TYPE" == "Darwin" ]] && command -v nginx >/dev/null 2>&1; then
+  case "${NGINX_ENABLE:-auto}" in
+    0|false|no|False|NO) NGINX_WILL_RUN=0 ;;
+    *) NGINX_WILL_RUN=1 ;;
+  esac
+fi
+
+if [ "$NGINX_WILL_RUN" -eq 1 ]; then
+  info "frontend: nginx will serve static files directly from $SERVE_ROOT"
+  # Ensure export exists for nginx
+  if [ ! -d "$SERVE_ROOT" ]; then
+    if command -v npm >/dev/null 2>&1; then
+      warn "missing frontend export; creating now"
+      (cd "$ROOT_DIR/apps/web" && npx expo export --platform web) || warn "web export failed"
+    fi
+  fi
 else
-  warn "frontend static server not started (missing npx or export). API will still run."
+  # Fallback: use npx serve (legacy mode)
+  if command -v npx >/dev/null 2>&1 && [ -d "$SERVE_ROOT" ]; then
+    info "frontend: port $FRONTEND_PORT (via npx serve)"
+    rotate_log "$LOG_DIR/serve.log" "$LOG_KEEP" "$HISTORY_DIR"
+    echo "----- $(date) start serve on :$FRONTEND_PORT -----" >> "$LOG_DIR/serve.log"
+    export FRONTEND_MODE=npx
+    log_cmd "$LOG_DIR/serve.log" npx serve -s "$SERVE_ROOT" -l "$FRONTEND_PORT"
+  else
+    warn "frontend static server not started (missing npx or export). API will still run."
+  fi
 fi
 
 # Backend API
@@ -222,12 +244,13 @@ if [[ "$OS_TYPE" == "Darwin" ]]; then
   if command -v envsubst >/dev/null 2>&1; then
   # macOS mktemp requires -t
     RENDERED_NGINX_CONF=$(mktemp -t nginx.vibrae)
-  # Substitute only our vars (avoid nginx runtime ones like $host)
+  # Substitute our vars (avoid nginx runtime ones like $host)
     DOMAIN_VAL="${DOMAIN:-_}"
     BACKEND_VAL="$BACKEND_PORT"
     FRONTEND_VAL="$FRONTEND_PORT"
-    DOMAIN="$DOMAIN_VAL" BACKEND_PORT="$BACKEND_VAL" FRONTEND_PORT="$FRONTEND_VAL" \
-      envsubst '${DOMAIN} ${BACKEND_PORT} ${FRONTEND_PORT}' < "$NGINX_CONF" > "$RENDERED_NGINX_CONF"
+    FRONTEND_ROOT_VAL="$FRONTEND_ROOT"
+    DOMAIN="$DOMAIN_VAL" BACKEND_PORT="$BACKEND_VAL" FRONTEND_PORT="$FRONTEND_VAL" FRONTEND_ROOT="$FRONTEND_ROOT_VAL" \
+      envsubst '${DOMAIN} ${BACKEND_PORT} ${FRONTEND_PORT} ${FRONTEND_ROOT}' < "$NGINX_CONF" > "$RENDERED_NGINX_CONF"
   # Restart clean if already running
     if pgrep -x nginx >/dev/null 2>&1; then
       warn "nginx already running; stopping for clean restart"

@@ -82,12 +82,14 @@ fi
 
 if [[ "$(uname)" == "Darwin" ]]; then
   info "nginx (macOS): stop"
-  if [ -x "$SCRIPT_DIR/scripts/nginxctl.sh" ]; then
-    sudo "$SCRIPT_DIR/scripts/nginxctl.sh" stop >/dev/null 2>&1 || true
-  else
-    sudo nginx -s stop >/dev/null 2>&1 || true
-  fi
-  # Give nginx a moment to release the port
+  # First try graceful shutdown with any running config
+  sudo nginx -s stop >/dev/null 2>&1 || true
+  nginx -s stop >/dev/null 2>&1 || true
+  sleep 1
+  # Force kill if still running
+  pkill -f "nginx: master process" >/dev/null 2>&1 || true
+  sudo pkill -f "nginx: master process" >/dev/null 2>&1 || true
+  # Ensure port 80 is freed
   sleep 1
 else
   info "nginx (Linux): stop"

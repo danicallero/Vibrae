@@ -1,0 +1,684 @@
+Metadata-Version: 2.4
+Name: vibrae-monorepo
+Version: 0.1.0
+Summary: Vibrae: full-stack music automation system
+Author: Dani Callero
+License: GPL-3.0-or-later
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: sqlalchemy
+Requires-Dist: pydantic
+Requires-Dist: passlib[bcrypt]
+Requires-Dist: bcrypt<4.0
+Requires-Dist: python-jose[cryptography]
+Requires-Dist: python-dotenv
+Requires-Dist: python-vlc
+Requires-Dist: websockets
+Requires-Dist: python-multipart>=0.0.9
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: ruff; extra == "dev"
+Dynamic: license-file
+
+# Vibrae
+<p align="center">
+	<img src="apps/web/assets/images/logo.png" alt="Vibrae" width="200"/>
+</p>
+<div align="center">
+	<img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="GPLv3 License" />
+	<img src="https://img.shields.io/badge/Backend-FastAPI-green" alt="FastAPI" />
+	<img src="https://img.shields.io/badge/Frontend-Expo%20React%20Native-blueviolet" alt="Expo React Native" />
+	<img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Raspberry%20Pi-lightgrey" alt="Platform" />
+	<a href="https://github.com/danicallero/vibrae/actions/workflows/ci.yml"><img src="https://github.com/danicallero/vibrae/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+	<a href="https://github.com/danicallero/vibrae/actions/workflows/codeql.yml"><img src="https://github.com/danicallero/vibrae/actions/workflows/codeql.yml/badge.svg" alt="CodeQL" /></a>
+	<a href="https://github.com/danicallero/vibrae/actions/workflows/sbom.yml"><img src="https://github.com/danicallero/vibrae/actions/workflows/sbom.yml/badge.svg" alt="SBOM" /></a>
+</div>
+
+---
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Features](#features)
+3. [Folder Structure](#folder-structure)
+4. [Quick Start](#quick-start)
+5. [Deployment & Configuration](#deployment--configuration)
+6. [Environment Variables](#environment-variables)
+7. [Logs & Monitoring](#logs--monitoring)
+8. [CLI Usage](#cli-usage)
+9. [Testing](#testing)
+10. [Screenshots](#screenshots)
+11. [License](#license)
+
+---
+
+## Overview
+
+**Vibrae** is a full-stack, open-source music automation system for gardens, patios, or any space where ambient music can enhance the experience. Designed for flexibility, customization, and ease of use, Vibrae enables fully self-hosted control—no external services or proprietary hardware required.
+
+> **Why Vibrae?**
+> Most music scheduling systems are basic, cloud-dependent, or tied to proprietary hardware. Vibrae is self-hosted, flexible, and fully controllable, running on Raspberry Pi, Mac, or Linux. Enjoy scheduled playlists, scenes, routines, volume control, and real-time updates from any device.
+
+---
+
+## Features
+
+- Real-time music scheduling & playback
+- Scene and routine management
+- Mobile/PWA frontend (Expo, React Native)
+- Easy deployment with unified scripts or Docker Compose
+- Optional secure access via Tailscale VPN
+- Reverse proxy via nginx (Cloudflare Tunnel or VPN handles HTTPS)
+- Encrypted environment files (SOPS + PGP)
+- Customizable playlists, scenes, schedules
+- Control from any device
+- Open-source, portable configuration
+
+---
+
+## Folder Structure
+
+```text
+apps/
+	api/                      # FastAPI application (vibrae_api)
+	web/                      # Expo / React Native web export & source
+packages/
+	core/                     # vibrae_core domain package (config, db, auth, player, scheduler)
+config/
+	env/                      # Environment configuration
+		.env.example          # Template for local configuration
+	logging.ini               # Logging configuration template
+scripts/
+	app/                      # Generic deployment scripts (run, stop, setup)
+	pi/                       # Raspberry Pi systemd scripts
+lib/
+	vibrae_helpers.sh         # Shared shell utilities
+music/                      # Media library (folder-per-scene)
+tests/                      # Pytest test suite
+vibrae                      # CLI entrypoint
+pyproject.toml              # Project dependencies and configuration
+Makefile                    # Development shortcuts
+```
+
+---
+
+## Quick Start
+
+Shortest path (guided):
+
+```bash
+./vibrae            # launches interactive install wizard if not installed
+# or
+vibrae wizard       # explicitly run the wizard
+```
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/danicallero/vibrae.git
+cd vibrae
+```
+
+### 2. Install dependencies
+
+```bash
+# Install all dependencies from pyproject.toml
+make install
+
+# Or manually:
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .[dev]
+```
+
+### 3. Configure environment
+
+```bash
+# Copy the example config and customize
+cp config/env/.env.example config/env/.env.backend
+# Edit config/env/.env.backend and set:
+# - SECRET_KEY (generate with: openssl rand -hex 32)
+# - DOMAIN (if using Cloudflare tunnel)
+# - CLOUDFLARE_TUNNEL_TOKEN (if using tunnel)
+# - Other settings as needed
+
+# Or use the CLI:
+./vibrae env sync      # Create .env.backend with defaults
+./vibrae env edit      # Edit configuration
+```
+
+> **Note:** The complex multi-layered env system (backend/frontend/runtime variants) has been simplified. Use `config/env/.env.backend` for all configuration.
+
+### 4. Add your music files
+
+Place music files in the `music/` folder, organized by scene (subfolder).
+
+### 4. Build the web frontend (one-time or after UI changes)
+
+From `apps/web/`, export the static web build so the static server can serve it.
+
+Examples (run in `apps/web/`):
+
+- Expo Dev server (interactive): `npx expo start --web`
+- Static export for run.sh: `npx expo export --platform web`
+
+Important: Web export
+- The static export may not include all PWA-related tags. After export, manually update `apps/web/dist/index.html` to ensure these are present in `<head>`:
+	- `<link rel="manifest" href="/manifest.json">`
+	- `<link rel="apple-touch-icon" sizes="180x180" href="/assets/images/icon.png">`
+	- Optionally add: `<meta name="apple-mobile-web-app-capable" content="yes">` and `<meta name="theme-color" content="#31DAD5">`
+	- The manifest file is at `apps/web/manifest.json`; the icon is at `apps/web/assets/images/icon.png`.
+
+### 5. Start all services
+
+You can use either the CLI or the scripts directly.
+
+CLI:
+
+```bash
+vibrae start   # start stack (prints license notice)
+vibrae status  # show running services
+vibrae stop    # stop stack (prints license notice)
+vibrae restart # stop + start
+```
+
+Scripts (direct):
+
+```bash
+scripts/app/run.sh
+scripts/app/stop.sh
+```
+
+These start backend API, static server (npx serve if export exists), nginx reverse proxy, and optional Cloudflare Tunnel.
+
+### 6. Access the app
+
+Visit your public Cloudflare Tunnel URL (e.g. `https://garden.example.com`) from any device.
+
+### 7. Stop all services
+
+```bash
+vibrae stop
+```
+
+Alternatively, you can run `./stop.sh`.
+
+---
+
+## Deployment & Configuration
+
+- **Environment Variables**: Managed via `vibrae env` (backend & frontend files under `config/env/`; root `.env` deprecated).
+- **nginx**: Reverse proxy for API, WebSocket, static assets.
+- **Cloudflare Tunnel**: HTTPS public access; token required when enabled.
+- **Scripts**: `scripts/app/run.sh` / `scripts/app/stop.sh` (invoked by CLI helpers when available).
+- **Frontend**: Expo (web export) served via npx or nginx.
+- **Backend**: FastAPI / Uvicorn + SQLite (file DB) using SQLAlchemy.
+- **Logging**: Separate `backend.log` and `player.log` via `config/logging.ini` (player & scheduler isolated).
+
+### Linux (systemd) — including Raspberry Pi
+
+Fully supported without Docker. Uses systemd services, nginx, and an auto‑update timer. Recommended path is via the CLI which preserves env variables through sudo.
+
+Quick install (on Linux, including Raspberry Pi):
+
+```bash
+# inside repo root on the Linux host (incl. Raspberry Pi)
+./vibrae systemd install                 # wraps: sudo -E bash scripts/pi/setup.sh
+# aliases: ./vibrae sys install, ./vibrae pi install
+```
+
+Optional one‑time secrets (set as env for install; they are persisted securely):
+
+- GPG_PRIVATE_KEY (+ GPG_OWNERTRUST): DEFAULT path (per `.sops.yaml`), imported for SOPS decrypt; optional `/etc/vibrae/gpg_pass` for passphrase
+- AGE_PRIVATE_KEY: OPTIONAL alternative; stored at `/etc/vibrae/age.key` but only works if your `.sops.yaml` includes `age` recipients and the env files were re‑encrypted with age
+- GIT_SSH_PRIVATE_KEY: deploy key saved to `/etc/vibrae/deploy_key` for non‑interactive `git pull`
+
+Examples:
+
+```bash
+# Using GPG (default; passphrase-less or with passfile)
+GPG_PRIVATE_KEY="$(cat private.asc)" GPG_OWNERTRUST="$(cat ownertrust.txt)" ./vibrae systemd install
+# Optional: create a passfile if your GPG key is passphrase-protected
+echo 'your-passphrase' | sudo tee /etc/vibrae/gpg_pass >/dev/null && sudo chmod 600 /etc/vibrae/gpg_pass
+
+# Persist a git deploy key for auto-update
+GIT_SSH_PRIVATE_KEY="$(cat id_ed25519)" ./vibrae systemd install
+
+# Using AGE (only if .sops.yaml has age recipients and files were re-encrypted)
+AGE_PRIVATE_KEY='AGE-SECRET-KEY-...' ./vibrae systemd install
+```
+
+Services created (systemd):
+
+- vibrae-backend.service (Uvicorn / FastAPI)
+- vibrae-frontend.service (static server via `npx serve` if export exists)
+- vibrae-cloudflared.service (optional; requires `CLOUDFLARE_TUNNEL_TOKEN`)
+- vibrae-update.service + vibrae-update.timer (auto‑pull + reinstall every ~10min)
+
+Common management:
+
+```bash
+./vibrae systemd status
+./vibrae systemd start
+./vibrae systemd stop
+./vibrae systemd logs
+# aliases: use `sys` or legacy `pi` in place of `systemd`
+```
+
+Passwordless sudo (optional):
+
+To avoid re‑typing your password for service control, enable a limited sudoers rule during setup:
+
+```bash
+VIBRAE_SUDOERS=1 ./vibrae systemd install
+```
+
+This grants your user NOPASSWD for a small set of Vibrae commands: systemctl start/stop/restart/status vibrae-* and nginx; journalctl for vibrae-* and nginx; and the Pi helper scripts. Safe for operational convenience.
+
+Alternatively, you can add these sudoers rules any time after installation without reinstalling:
+
+```bash
+./vibrae systemd sudoers   # aliases: sys sudoers, pi sudoers
+```
+
+Notes:
+
+- The canonical setup script lives at `scripts/pi/setup.sh`. The legacy `raspi/setup.sh` remains as a thin wrapper (deprecated).
+- The installer will decrypt `config/env/.env.backend.enc` if present and keys are available. By default, `.sops.yaml` uses PGP; AGE works only if you add `age` recipients and re‑encrypt. Plaintext is written to `config/env/.env.backend` on the Pi.
+- Auto‑update is idempotent and non‑interactive. It will attempt `git pull` (or hard reset) and reinstall Python deps if needed, then restart services.
+
+Adding AGE recipients (optional):
+
+1) Generate an age key on your workstation (keeps private key local):
+```bash
+age-keygen -o ~/.config/age/key.txt
+```
+2) Copy the public recipient (starts with `age1...`) from that file and add to `.sops.yaml` under `key_groups.age`:
+```yaml
+creation_rules:
+	- path_regex: '^config/env/\\.env\\.(backend|frontend)(\\.enc)?$'
+		key_groups:
+			- pgp:
+					- FF46BCFF59A65BC21DA916A289FC9A82DD3ECF94  # dani's macbook
+				age:
+					- age1yourpublicrecipient...
+```
+3) Re-encrypt your envs so they include an age stanza:
+```bash
+./vibrae env encrypt
+./vibrae env f-encrypt
+```
+
+---
+
+## Environment Variables
+
+All configuration is managed through `config/env/.env.backend` (or `.env` for backwards compatibility).
+
+Use `config/env/.env.example` as a template:
+
+```bash
+cp config/env/.env.example config/env/.env.backend
+# Edit and customize your settings
+```
+
+### Configuration Keys
+
+| Key | Purpose | Default |
+|-----|---------|---------|
+| **Backend** | | |
+| BACKEND_PORT | API listen port | 8000 |
+| BACKEND_MODULE | Uvicorn module path | apps.api.src.vibrae_api.main:app |
+| SECRET_KEY | JWT signing secret | change-me-please |
+| **Frontend** | | |
+| FRONTEND_PORT | Static server port | 9081 |
+| FRONTEND_DIST | Web build path | /apps/web/dist |
+| **Music** | | |
+| MUSIC_MODE | Source type: folder or usb | folder |
+| MUSIC_DIR | Music directory path | music |
+| USB_SUBDIR | USB subdirectory (if usb mode) | |
+| VIBRAE_MUSIC | USB mount point | |
+| **Logging** | | |
+| LOG_LEVEL | Log verbosity | INFO |
+| LOG_KEEP | Rotated logs to keep | 5 |
+| LOG_ROTATE_INTERVAL_HOURS | Rotation interval | 12 |
+| **Networking** | | |
+| DOMAIN | Public domain | |
+| NGINX_CONF | Nginx config file | nginx.conf |
+| TUNNEL | Tunnel mode: cloudflared/none | cloudflared |
+| CLOUDFLARE_TUNNEL_TOKEN | Cloudflare token | |
+| **Other** | | |
+| AUTOSTART | Auto-start on CLI launch | false |
+
+### Secret Management
+
+For production deployments, you can encrypt sensitive values using SOPS:
+
+```bash
+# Encrypt configuration
+./vibrae env encrypt
+
+# Edit encrypted config
+./vibrae env edit-sec
+```
+
+Encrypted files (`.env.*.enc`) can be safely committed to git.
+
+Commands now RETAIN plaintext after encrypt / edit cycles (no auto shred). This supports iterative local edits without repeated decrypt steps. You must manually ensure you do not commit plaintext files (gitignore already blocks them).
+
+Legacy names still warn: `.env.runtime*`, `.env.frontend.runtime*`.
+
+#### One‑time PGP setup
+Import the provided public keys (each machine):
+```bash
+gpg --import path/to/public_key_1.asc
+gpg --import path/to/public_key_2.asc
+```
+Confirm fingerprints match those in `.sops.yaml`.
+
+#### Migrating old runtime files
+If you still have legacy `*.runtime*` or root `.env` files, manually copy relevant keys into `config/env/.env.backend` / `.env.frontend` then remove the legacy files. The CLI will warn if it detects them.
+
+#### Backend secret workflow
+```bash
+./vibrae env sync         # create or fill gaps in .env.backend
+./vibrae env edit         # set required values (SECRET_KEY, DOMAIN, etc.)
+./vibrae env encrypt      # produce .env.backend.enc (plaintext kept locally)
+./vibrae env edit-sec     # safe cycle: decrypt -> edit -> re-encrypt (plaintext retained)
+```
+Plaintext is intentionally retained for iterative development; never commit it.
+
+#### Frontend secret/public workflow
+```bash
+./vibrae env f-sync       # ensure .env.frontend exists
+./vibrae env f-edit       # add EXPO_PUBLIC_* vars
+./vibrae env f-encrypt    # produce .env.frontend.enc
+./vibrae env f-edit-sec   # safe edit cycle (decrypt -> edit -> encrypt)
+```
+
+#### Decrypt (materialize / refresh plaintext)
+```bash
+./vibrae env decrypt      # backend
+./vibrae env f-decrypt    # frontend
+```
+
+If plaintext already exists it will just be overwritten with current decrypted content.
+
+#### Safety / CI notes
+- Never commit plaintext `config/env/.env.*` files (gitignore blocks them; verify before pushing).
+- Commit: `.env.*.example` + `.env.*.enc` only.
+- CI/CD: import GPG private key(s), run decrypt to materialize working plaintext before invoking `run.sh` / tests.
+- Optional hygiene step (manual): `shred -u config/env/.env.backend config/env/.env.frontend 2>/dev/null || rm -f ...` BEFORE screen sharing or support dumps.
+
+Future enhancement (planned): `vibrae env scrub` to securely remove any plaintext envs prior to publishing artifacts.
+
+#### run.sh sourcing summary
+Order: `.env.backend` (warn & fallback: legacy `.env.runtime*`) → `.env.frontend` → shell exports. Root `.env` is ignored (warning printed if present).
+
+---
+
+## Health Checks
+
+Check service health at:
+
+```
+GET /health
+```
+
+Returns JSON:
+
+```
+{
+	"backend": "ok",
+	"frontend": "ok" | "missing",
+	"player": "ok" | "idle"
+}
+```
+
+## Logs & Monitoring
+
+Logs under `logs/` with history in `logs/history/`:
+
+| File | Purpose |
+|------|---------|
+| backend.log | API + uvicorn + general app messages |
+| player.log  | Player & scheduler events (separate handler) |
+| serve.log   | Static server (npx serve) output |
+| cloudflared.log | Tunnel connection logs |
+
+Rotation:
+- Copy-truncate; configurable via `LOG_KEEP` & `LOG_ROTATE_INTERVAL_HOURS`.
+- History naming: `<name>-YYYYMMDD-HHMMSS.log`.
+
+Frontend Logs UI:
+- Browse latest and historical files.
+- Tail with adjustable line count.
+- Jump between history snapshots quickly.
+
+
+
+## CLI Usage
+
+Grouped summary (see `vibrae help` or any `command -h` for detailed help):
+
+Core: `start`, `stop`, `restart`, `status`, `logs`, `open`, `url`, `front restart`
+Environment: `env show|edit|set|get|sync|encrypt|decrypt|edit-sec` + frontend `f-show|f-edit|f-set|f-get|f-sync|f-encrypt|f-decrypt|f-edit-sec`
+Database: `db init` (maps internally to `db-init`)
+Music Source: `source detect`, `autostart on|off`
+Diagnostics: `check-env`, `doctor`
+Systemd (Linux): `systemd install|start|stop|status|logs|sudoers` (aliases: `sys`, `pi`)
+macOS: `mac sudoers`
+Misc: `shell`, `clear`, `version`, `help`
+
+Inside interactive shell: `help`, `status`, `logs`, etc. AUTOSTART (if true) triggers service start upon entering shell.
+
+### Quick Cheat Sheet
+
+| Task | Command |
+|------|---------|
+| Install deps / venv | `vibrae install` |
+| Start / Stop / Restart | `vibrae start` / `vibrae stop` / `vibrae restart` |
+| Show status & health | `vibrae status` |
+| Tail logs (all / one) | `vibrae logs` / `vibrae logs backend 200` |
+| Open web UI | `vibrae open` |
+| Print URLs | `vibrae url` |
+| Sync missing env keys | `vibrae env sync` |
+| Show / edit backend env | `vibrae env show` / `vibrae env edit` |
+| Set one key | `vibrae env set KEY=VALUE` |
+| Encrypt backend / frontend | `vibrae env encrypt` / `vibrae env f-encrypt` |
+| Secure edit backend / frontend | `vibrae env edit-sec` / `vibrae env f-edit-sec` |
+| Decrypt (materialize/update) | `vibrae env decrypt` / `vibrae env f-decrypt` |
+| Frontend show / edit | `vibrae env f-show` / `vibrae env f-edit` |
+| Frontend set one key | `vibrae env f-set KEY=VALUE` |
+| Frontend sync defaults | `vibrae env f-sync` |
+| Show single backend key | `vibrae env get KEY` |
+| Show single frontend key | `vibrae env f-get KEY` |
+| Detect music source | `vibrae source detect` |
+| Toggle autostart | `vibrae autostart on|off` |
+| Add Linux passwordless sudo (systemd) | `vibrae systemd sudoers` (or `VIBRAE_SUDOERS=1 vibrae systemd install`) |
+| Add macOS passwordless sudo | `vibrae mac sudoers` |
+| Initialize database | `vibrae db init` |
+| Environment validation | `vibrae check-env` (alias: `ce`) |
+| Dependency doctor | `vibrae doctor` (alias: `doc`) |
+| Systemd service logs | `vibrae systemd logs` (aliases: `sys logs`, `pi logs`) |
+| Interactive shell | `vibrae shell` (alias: `sh`) |
+
+Aliases: `ver`→version, `st`→status, `ce`→check-env, `doc`→doctor, `up`→start, `down`→stop, `ls-env`→env show.
+
+### Typical First Run Flow
+```bash
+vibrae install
+vibrae env sync          # ensure backend file & defaults
+vibrae env f-sync        # ensure frontend defaults
+vibrae env edit          # set SECRET_KEY, DOMAIN, etc.
+vibrae env encrypt       # create backend encrypted blob (optional early)
+vibrae env f-encrypt     # create frontend encrypted blob (optional)
+vibrae db init           # create tables / seed admin
+vibrae start             # launch stack
+vibrae status            # confirm health
+```
+
+### Secure Edit vs Plain Edit
+`env edit` edits existing plaintext directly (fails if missing). `env edit-sec` always performs decrypt → edit → re-encrypt, ensuring `.enc` stays current. Both now keep plaintext; use `git status` before committing.
+
+### PGP Key Management (SOPS)
+` .sops.yaml` lists recipient fingerprints. To grant a new collaborator access:
+1. Add their public key (they send you: `gpg --armor --export <FPR>`).
+2. Append their fingerprint under the appropriate SOPS `pgp` recipients in `.sops.yaml`.
+3. Re-encrypt each env: `vibrae env encrypt && vibrae env f-encrypt`.
+4. Commit updated `.sops.yaml` + `*.enc`.
+
+Rotate / revoke access (lost key or teammate leaves):
+1. Remove old fingerprint from `.sops.yaml`.
+2. Import replacement/new key(s).
+3. Re-encrypt both backend & frontend envs.
+4. Commit new encrypted blobs.
+
+List local keys:
+```bash
+gpg --list-keys
+```
+Show fingerprints only:
+```bash
+gpg --list-keys --fingerprint | grep -E '^[ ]+[0-9A-F]{40}$'
+```
+
+Test decryption without writing plaintext:
+```bash
+sops --decrypt config/env/.env.backend.enc >/dev/null
+```
+
+### Adding a New Secret / Key
+Backend (plaintext present):
+```bash
+vibrae env set NEW_KEY=value
+vibrae env encrypt        # keep encrypted blob in sync
+```
+Frontend:
+```bash
+vibrae env f-set EXPO_PUBLIC_FEATURE_FLAG=1
+vibrae env f-encrypt
+```
+
+### CI/CD Secrets Flow Example
+Pseudo GitHub Actions step (conceptual):
+```yaml
+- name: Import GPG private key
+	run: |
+		echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+		echo "$GPG_OWNERTRUST" | gpg --batch --import-ownertrust || true
+- name: Decrypt env
+	run: |
+		./vibrae env decrypt
+		./vibrae env f-decrypt || true
+- name: Start services (test mode)
+	run: |
+		vibrae db init
+		vibrae start
+		# run integration tests here
+```
+
+If you want to avoid persisting plaintext post‑pipeline, delete them at end:
+```bash
+rm -f config/env/.env.backend config/env/.env.frontend
+```
+
+### Command Help Flags
+Every top‑level command and subcommand accepts `-h` / `--help` (e.g. `vibrae env -h`, `vibrae front restart -h`).
+
+## Testing
+
+### Overview
+Automated tests now cover core subsystems:
+
+| Area | File(s) | Focus |
+|------|---------|-------|
+| Player crossfade | `tests/test_player_crossfade.py` | Crossfade loop, guard window, graceful stop |
+| Config resolution | `tests/test_config_paths.py` | Repo root heuristic, music & web dist fallback |
+| DB init | `tests/test_db_init.py` | Idempotent table creation + optional admin seed path |
+| Auth | `tests/test_auth_token.py` | Token encode/decode + password hashing/verify |
+| Scheduler matching | `tests/test_scheduler_match.py` | Routine + scene time-window match logic |
+| CLI surface | `tests/test_cli_version.py` | Basic invocation & version output |
+
+These run fast and rely only on an in-repo SQLite file plus standard libs. VLC functions are mocked so no real audio output occurs.
+
+Optional dependencies:
+* If `passlib` isn't installed, auth tests fall back to a lightweight PBKDF2‑HMAC(SHA‑256) hasher with a static salt for deterministic runs, configurable via env. This preserves round‑trip verification in minimal environments.
+* If `python-vlc` isn't available, the test fixture supplies a mock module; scheduler tests will skip only if even the mock can't be initialized.
+
+### Run Tests
+From the project root (example fresh environment):
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .[dev]
+pytest -q
+```
+
+Selective runs:
+```bash
+pytest tests/test_config_paths.py::test_effective_web_dist_fallback -q
+pytest -k scheduler -q
+```
+
+Show slowest 10 tests:
+```bash
+pytest --durations=10 -q
+```
+
+### VLC Mock Design
+- Defined in `tests/conftest.py` as an autouse fixture `mock_vlc`.
+- Replaces the real `vlc` module before `vibrae_core.player` is imported.
+- Media duration is short (a few seconds) so crossfades complete quickly.
+- Player state is exercised via the real playback thread; only the media/volume/time functions are simulated.
+
+### Adding More Tests
+Guidelines:
+1. Keep individual tests < 1s wall time (use `wait_until` helper vs. long sleeps).
+2. Use temporary paths (`tmp_path` fixture) when writing files.
+3. Avoid network calls; mock external processes (tunnels, nginx) if/when added.
+4. Prefer pure functions or thin wrappers for new logic to simplify assertions.
+5. Mark integration/slow tests with `@pytest.mark.slow` (none currently) so they can be excluded: `pytest -m 'not slow'`.
+
+Player module note: use the `player_module` fixture (see `tests/conftest.py`) which ensures the VLC mock is loaded before importing the real player code.
+
+### Customizing Mock Behavior
+Adjust or extend the VLC mock in `tests/conftest.py`:
+* Change `MockMedia.get_duration()` duration for different crossfade scenarios.
+* Add attributes/events to verify intermediate playback states.
+
+### Using Real VLC (Optional)
+If you want an integration run with real audio:
+1. Temporarily comment out or rename the `mock_vlc` autouse fixture in `tests/conftest.py`.
+2. Ensure local VLC runtime / `python-vlc` is installed.
+3. Provide actual media files under `music/`.
+
+Keep such runs separate; unit tests should remain fast and silent by default.
+
+---
+
+## Screenshots
+
+Click any thumbnail to view the full-size image.
+
+|  |  |  |
+|:--:|:--:|:--:|
+| <a href="assets/login.png"><img src="assets/login.png" alt="Login" width="260"/></a><br/><sub>Login</sub> | <a href="assets/home.png"><img src="assets/home.png" alt="Home" width="260"/></a><br/><sub>Home</sub> | <a href="assets/routine_list_view.png"><img src="assets/routine_list_view.png" alt="Routine List View" width="260"/></a><br/><sub>Routine List View</sub> |
+| <a href="assets/routine_week_view.png"><img src="assets/routine_week_view.png" alt="Routine Week View" width="260"/></a><br/><sub>Routine Week View</sub> | <a href="assets/routine_creation.png"><img src="assets/routine_creation.png" alt="Routine Creation" width="260"/></a><br/><sub>Routine Creation</sub> | <a href="assets/routine_edit.png"><img src="assets/routine_edit.png" alt="Routine Edit" width="260"/></a><br/><sub>Routine Edit</sub> |
+| &nbsp; | <a href="assets/scene_creation.png"><img src="assets/scene_creation.png" alt="Scene Creation" width="260"/></a><br/><sub>Scene Creation</sub> | &nbsp; |
+
+---
+
+## License
+
+This project is licensed under the GNU GPLv3. See `LICENSE` for full terms.
+
+<div align="center">
+Made with ❤️, Python, React Native, and Expo by <b>Dani Callero</b>
+</div>
+
+---

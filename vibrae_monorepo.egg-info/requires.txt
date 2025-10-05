@@ -1,14 +1,15 @@
-
 fastapi
 uvicorn
-websockets
+sqlalchemy
+pydantic
 passlib[bcrypt]
 bcrypt<4.0
-pydantic
-sqlalchemy
 python-jose[cryptography]
 python-dotenv
 python-vlc
-pytest
+websockets
 python-multipart>=0.0.9
 
+[dev]
+pytest
+ruff

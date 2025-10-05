@@ -1,19 +1,23 @@
 [project]
 name = "vibrae-monorepo"
 version = "0.1.0"
-description = "Vibrae monorepo (API + core)"
-requires-python = ">=3.11"
+description = "Vibrae: full-stack music automation system"
+authors = [{ name = "Dani Callero" }]
+license = { text = "GPL-3.0-or-later" }
+readme = "README.md"
+requires-python = ">=3.9"
 dependencies = [
   "fastapi",
   "uvicorn",
   "sqlalchemy",
   "pydantic",
   "passlib[bcrypt]",
-  "bcrypt<4.0",  # explicit pin aligning with requirements.txt
+  "bcrypt<4.0",
   "python-jose[cryptography]",
   "python-dotenv",
   "python-vlc",
   "websockets",
+  "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -22,11 +26,16 @@ dev = [
   "ruff",
 ]
 
-[tool.setuptools]
-packages = []
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["packages/core/src", "apps/api/src"]
 
 [tool.uvicorn]
 factory = false
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

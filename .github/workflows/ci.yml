@@ -24,20 +24,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest ruff
+          pip install -e .[dev]
 
       - name: Lint (ruff)
         run: |
@@ -46,15 +38,17 @@ jobs:
       - name: Secret scan (plaintext env guard)
         run: |
           set -e
-          if git ls-files | grep -q '^config/env/.env.runtime$'; then
-            echo "Plaintext config/env/.env.runtime is tracked!" >&2; exit 1; fi
-          if git ls-files | grep -q '^config/env/.env.frontend.runtime$'; then
-            echo "Plaintext config/env/.env.frontend.runtime is tracked!" >&2; exit 1; fi
-          if git ls-files | grep -q '^.env.runtime$'; then
-            echo "Plaintext .env.runtime at repo root is tracked!" >&2; exit 1; fi
-          if git ls-files | grep -q '^.env.frontend.runtime$'; then
-            echo "Plaintext .env.frontend.runtime at repo root is tracked!" >&2; exit 1; fi
-          echo "[ok] No tracked plaintext runtime env files."
+          if git ls-files | grep -q '^config/env/.env.backend$'; then
+            echo "❌ Plaintext config/env/.env.backend is tracked!" >&2
+            echo "Only .env.backend.enc should be committed." >&2
+            exit 1
+          fi
+          if git ls-files | grep -q '^config/env/.env.frontend$'; then
+            echo "❌ Plaintext config/env/.env.frontend is tracked!" >&2
+            echo "Only .env.frontend.enc should be committed." >&2
+            exit 1
+          fi
+          echo "✓ No tracked plaintext env files"
 
       - name: Run tests
         run: pytest -q
